@@ -6,6 +6,7 @@ DEFAULT_CONFIG = {
     'ui': {
         'start_fullscreen': True,
         'default_zoom': 'fit_to_canvas',  # no_zoom, fit_to_canvas, fill_canvas
+        'max_zoom_percent': 200,          # Maximum zoom percentage (200 = 200% = 2x)
         'undo_queue_size': 1000,
         'preload_next_images': 3,         # Pre-load next n images
         'retain_previous_images': 2,      # Keep previous n in cache
@@ -35,12 +36,13 @@ DEFAULT_CONFIG = {
         'random_order': False,
         'show_info': False,
         'loop': True,                     # Loop back to beginning
-        'include_subfolders': True
+        'include_subfolders': True,
+        'gif_animation_speed': 1.0        # GIF animation speed multiplier (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
     },
     
     'database': {
         'type': 'sqlite',                 # sqlite, postgresql, mysql
-        'path': '.photo_manager.db',
+        'database_name': '.photo_manager.db',
         'backup_on_startup': True,
         'auto_cleanup_missing': False     # Automatically remove missing files
     },
@@ -64,18 +66,15 @@ DEFAULT_CONFIG = {
         ],
         'ignore_hidden_files': True,
         'ignore_patterns': [
-            '.*',           # Hidden files
             'Thumbs.db',    # Windows thumbnails
-            '.DS_Store',    # macOS metadata
-            '*.tmp',        # Temporary files
-            '*.temp'
+            '.DS_Store'     # macOS metadata
         ],
         'max_file_size_mb': 500          # Skip files larger than this
     },
     
     'performance': {
         'image_cache_size_mb': 512,      # Memory limit for image cache
-        'thumbnail_size': [256, 256],    # Thumbnail dimensions for cache (using list instead of tuple)
+        'thumbnail_size': [256, 256],    # Thumbnail dimensions for cache
         'background_threads': 2,         # Number of background processing threads
         'preload_timeout_seconds': 30    # Timeout for preloading operations
     },

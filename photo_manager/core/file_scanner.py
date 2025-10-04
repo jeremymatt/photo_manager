@@ -34,15 +34,25 @@ def is_image_file(file_path: str) -> bool:
     try:
         # First check extension for speed
         image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp'}
-        if Path(file_path).suffix.lower() not in image_extensions:
+        extension = Path(file_path).suffix.lower()
+        
+        print(f"      PIL check: extension='{extension}', in supported={extension in image_extensions}")
+        
+        if extension not in image_extensions:
             return False
         
-        # Then verify with PIL
-        with Image.open(file_path) as img:
-            img.verify()  # Verify it's a valid image
-            return True
+        # Then verify with PIL - but be less strict
+        try:
+            with Image.open(file_path) as img:
+                width, height = img.size
+                print(f"      PIL opened successfully: {width}x{height}")
+                return width > 0 and height > 0
+        except Exception as e:
+            print(f"      PIL failed to open: {e}")
+            return False
             
-    except Exception:
+    except Exception as e:
+        print(f"      Error in is_image_file: {e}")
         return False
 
 
@@ -237,7 +247,7 @@ class FileScanner:
                 return False
             
             # Verify it's actually an image
-            img_type = imghdr.what(file_path)
+            img_type = Image.open(file_path)
             return img_type is not None
             
         except Exception as e:

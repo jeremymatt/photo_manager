@@ -152,7 +152,7 @@ def run_qt_application(args):
     try:
         # Import Qt modules
         from photo_manager.ui.qt.viewer import MainWindow
-        from PySide2.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
         
         app = QApplication(sys.argv)
         
@@ -177,7 +177,7 @@ def run_qt_application(args):
         
     except ImportError as e:
         print(f"Error: Qt dependencies not available: {e}")
-        print("Try installing with: pip install PySide2")
+        print("Try installing with: pip install PySide6")
         return 1
 
 
