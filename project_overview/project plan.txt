@@ -11,7 +11,7 @@ jmatt@Hannah:/mnt/d/Github/photo_manager$ tree -I "tp|test_photos"
 ├── LICENSE
 ├── README.md
 ├── activate_venv.bat
-├── claude_info_bkup
+├── project_overview
 │   └── project plan.txt
 ├── mk_dir.py
 ├── photo_manager
@@ -74,7 +74,7 @@ jmatt@Hannah:/mnt/d/Github/photo_manager$ tree -I "tp|test_photos"
 
 ### File Responsibilities
 
-#### 1. **viewer.py** (~200 lines)
+#### 1. **viewer.py**
 **Purpose**: Main application window and UI coordination
 - Window initialization and layout management
 - Menu bar creation
@@ -85,7 +85,7 @@ jmatt@Hannah:/mnt/d/Github/photo_manager$ tree -I "tp|test_photos"
 - Theme management
 - Application lifecycle (startup/shutdown)
 
-#### 2. **image_display.py** (~300 lines)
+#### 2. **image_display.py**
 **Purpose**: Image display and visual manipulation
 - `ImageDisplayWidget` class with zoom/pan/rotate
 - `ImageLoadWorker` for background loading
@@ -96,7 +96,7 @@ jmatt@Hannah:/mnt/d/Github/photo_manager$ tree -I "tp|test_photos"
 - Error handling for corrupt/missing images
 - Multiple fit modes (fit to window, actual size, fill window)
 
-#### 3. **keyboard_handler.py** (~150 lines)
+#### 3. **keyboard_handler.py**
 **Purpose**: Centralized keyboard and hotkey management
 - `KeyboardHandler` class
 - Keyboard shortcut registration and management
@@ -106,7 +106,7 @@ jmatt@Hannah:/mnt/d/Github/photo_manager$ tree -I "tp|test_photos"
 - Dynamic hotkey modification at runtime
 - Conflict detection for key bindings
 
-#### 4. **navigation_controller.py** (~200 lines)
+#### 4. **navigation_controller.py**
 **Purpose**: Image navigation and file operations
 - `NavigationController` class
 - Image list management and filtering
@@ -117,99 +117,46 @@ jmatt@Hannah:/mnt/d/Github/photo_manager$ tree -I "tp|test_photos"
 - Tag operations (copy/paste tags between images)
 - Search result handling
 
-#### 5. **slideshow.py** (existing, ~200 lines)
+#### 5. **slideshow.py**
 **Purpose**: Slideshow functionality
 - Fullscreen slideshow widget
 - Transition effects and timing
 - Slideshow controls and navigation
 
-#### 6. **dialogs.py** (existing, ~400 lines)
+#### 6. **dialogs.py**
 **Purpose**: Modal dialog windows
 - Tag management dialogs
 - Export configuration dialogs
 - Search and query builder dialogs
 - Database maintenance dialogs
 
-#### 7. **export_preview.py** (existing, ~300 lines)
+#### 7. **export_preview.py**
 **Purpose**: Export functionality
 - Export preview and configuration
 - Background export operations
 - File structure generation
 
-## Communication Between Modules
 
-### Signal/Slot Architecture
-```python
-# viewer.py coordinates between modules
-class MainWindow(QMainWindow):
-    def __init__(self):
-        # Create specialized controllers
-        self.image_display = ImageDisplayWidget()
-        self.keyboard_handler = KeyboardHandler(self)
-        self.navigation_controller = NavigationController(self)
-        
-        # Connect signals between modules
-        self.navigation_controller.image_changed.connect(self.image_display.load_image)
-        self.image_display.image_loaded.connect(self._update_ui_state)
-        self.keyboard_handler.action_triggered.connect(self._handle_keyboard_action)
-```
 
-### Dependency Flow
-```
-viewer.py (coordinator)
-    ├── image_display.py (visual operations)
-    ├── keyboard_handler.py (input handling)  
-    ├── navigation_controller.py (navigation logic)
-    └── dialogs.py (modal operations)
-```
-
-## Enhanced Features to Add
-
-### 1. **Animated GIF Support** (in image_display.py)
-```python
-class AnimatedGifHandler:
-    def __init__(self, parent_widget):
-        self.movie = QMovie()
-        self.parent_widget = parent_widget
-    
-    def load_gif(self, file_path):
-        self.movie.setFileName(file_path)
-        self.parent_widget.setMovie(self.movie)
-        self.movie.start()
-    
-    def pause_animation(self):
-        self.movie.setPaused(True)
-    
-    def resume_animation(self):
-        self.movie.setPaused(False)
-```
-
-### 2. **Enhanced Image Manipulation** (in image_display.py)
+### 2. **Image Manipulation**
+- zoom in/out using mousewheel at a point 
 - Brightness/contrast adjustments
-- Image filters (sepia, grayscale, etc.)
-- Rotation in arbitrary angles (not just 90°)
 - Image cropping preview
 - Histogram display
 
-### 3. **Advanced Keyboard Handling** (in keyboard_handler.py)
+### 3. **Advanced Keyboard Handling**
 - Context-sensitive shortcuts
 - Hotkey conflict detection
 - Runtime hotkey modification
 - Hotkey help overlay
 
-### 4. **Smart Navigation** (in navigation_controller.py)
+### 4. **Smart Navigation**
 - Folder-aware navigation
-- Recently viewed images
-- Bookmarks/favorites quick access
+    * Group images by folder when determining display order 
+    * Controls (ctrl+right-arrow or +left-arrow) to jump to the next/previous folder
+    * Controls to apply tags to all images in folder
+- Jump to image by index #
 - Jump to image by date/tag
-
-## Migration Strategy
-
-1. **Phase 1**: Create new modular files with clean interfaces
-2. **Phase 2**: Move existing functionality to appropriate modules
-3. **Phase 3**: Update viewer.py to coordinate between modules
-4. **Phase 4**: Add new features (GIF support, enhanced manipulation)
-5. **Phase 5**: Testing and refinement
 
 
 ### 1. Best Image Display Package
@@ -511,39 +458,3 @@ python -m photo_manager --export-query "event_tags:birthday AND people_tags:chil
 5. **Corrupt Images**: Display "Could not load image" placeholder, flag for deletion
 6. **Loading Errors**: Log errors, continue processing other images
 7. **Hash Calculation Failures**: Skip hashing, continue with other metadata
-
-## Testing Strategy
-
-1. **Unit Tests**: Each component individually
-2. **Integration Tests**: Database + UI interactions
-3. **Performance Tests**: Large directory handling
-4. **UI Tests**: Keyboard shortcuts and workflows
-
-## Development Phases
-
-### Phase 1: Core Infrastructure
-- Database models and migrations
-- Configuration management
-- Basic file scanning
-
-### Phase 2: Image Viewing
-- Basic viewer with zoom/pan
-- Keyboard shortcuts
-- Tag display
-
-### Phase 3: File Management
-- Tag editing and management
-- Export functionality
-- Duplicate detection
-
-### Phase 4: Advanced Features
-- Slideshow mode
-- Advanced filtering
-- Performance optimizations
-
-### Phase 5: Polish & Testing
-- Error handling
-- Documentation
-- Comprehensive testing
-
-This architecture provides a solid foundation that's maintainable, extensible, and addresses all your requirements while being significantly more organized than the current monolithic script.
