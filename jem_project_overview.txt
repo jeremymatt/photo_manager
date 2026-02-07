@@ -1,0 +1,228 @@
+I want to develop a set of photo viewer and photo organizer tools.  The super high level goal is a cross-platform organization tool (linux or windows - no need for mobile support) that helps me identify duplicate images, tag images, and generally organize my family photos and a matching lightweight image viewer that I can use either on desktop/laptop or to build a raspberry pi based digital picture frame.  I have a very detailed idea of what I want; the notes below will need to be divided into steps and completion of feature will need to be tracked. Before getting sidetracked in the weeds, lets answer the high-level questions, resolve any outstanding high-level clarifying questions you may have, and develop an implementation plan.  Once we have the implementation plan, we can answer more detailed clarifying questions associated with each step in the plan.
+
+Open questions:
+1. Do I need to do anything to set up AI agent(s) to execute this project?
+2. What language to use?
+3. Would adding GPU support noticeably improve performance on larger images (e.g., 8k) or is the app more likely to be io limited?  If it would improve performance, is adding GPU support feasible?  I don't really want to have to muck around with setting up CUDA in order to run the app.
+
+Full-featured desktop organizer/viewer:
+1. Database backend with the ability start new databases for different photo collections (I might want one for family photos and one for a work project for example)
+2. Fast. I want to be able to rapidly flip through images, so the app should try to pre-load the next N images in the background and should retain the previous N images after being loaded for quicker switching between images.
+3. Needs to support all common image formats and animated GIF images.  It also needs to check for EXIF rotations and handle those cleanly.  
+4. I want the database to the following picture info:
+	a. Picture date (year, month, day, hr, min, sec)
+	b. Filepath relative to the database
+	c. Perceptual hash (or hashes) for duplicate detection
+	d. Image tag tree.  I don't know the best way to organize this in a database, but this is the effect I want. Leaf nodes are tags and other nodes are categories or subcategories. The default tree structures should be something as follows (leaf nodes in double quotes and data types for categories and subcategories
+		*tags
+			* favorite  (boolean)
+			* to_delete (boolean)
+			* photographer_name (string)
+			* scene (string)
+				* "indoor"
+				* outdoor (string)
+					* "lake"
+					* "hike"
+			* event (string)
+				* "christmas"
+				* birthday (string)
+					* "Alice"
+					* "Bob"
+				* vacation (string)
+					* "Lake"
+					* "City"
+			* person (string)
+				* "Alice"
+				* "Bob"
+			* datetime
+				* datetime (datetime stamp in local time)
+				* year (int)
+				* month (int)
+				* day (int)
+				* hr (int)
+ 				* min (int)
+				* sec (int)
+			* location
+				* latitude (string)
+				* longitude (string)
+				* has_lat_lon (bool)
+				* city (string)
+				* town (string)
+				* state (string)
+			* reviewed (boolean)
+			* image_size
+				* width (int)
+				* height (int)
+			* auto_tag_errors (boolean)
+5. I want to be able to point the file manager at a directory, have it recursively scan for images and then add new images to the manager database.  When files are added I want the program to do the following for each:
+	a. Calculating a perceptual image hash (or set of hashes - are there multiple hashes that should be used to identify duplicates?) to identify duplicates or near duplicates.  Hash calculation should be done in a separate thread/process so images can be viewed/tagged while hashes are being calculated in the background.
+	b. Check check for datetime information.  Use the following heirarchy to resolve conflicts:
+		i. EXIF
+		ii. Filename
+		iii. Folder/path
+	c. Check for EXIF lat/lon location information.
+	d. Load default image tags from directory structure and/or filename based on user-supplied template.  
+		i. The load template should be pulled from a load_template.txt file in the root scan directory.  This file would have some sort of string like that would define how the filepath is parsed into tag categories.  I don't know what tag format makes the most sense - please provide recommendations.  I'd like something human-readable and relatively easy for a human to generate.  I have something like the following examples in mind, but I'm not sure if it makes sense:
+			* "./{tag.datetime.year}/{tag.event.vacation}/*" to match files like "./2019/Lake/2019-07-04_15:30:24.jpg"
+			* "./{tag.datetime.year}/{tag.event.vacation}/{tag.person}.*" to match files like "./2019/Lake/Alice.jpg"
+			* "./{tag.birthday.alice}_birthday_{tag.datetime.year/{tag.person}.*" to match files like "./alices_birthday_2019/Img0021.jpg"
+		ii. If no load template is present, prompt to create one.  Note that a blank load_template should be allowed and should indicate that no tags (other than datetime and location) will be auto-populated.
+		iii. Warn if the load template is appears invalid (e.g., there are tag categories that don't appear in the database as might happen if a tag category is mis-spelled) and prompt for correction before loading images.  Provide the option to cancel the import.
+6. I want to be able to build logical tag combinations to select a list of images to display/review.  This should support common logical operators (e.g., ||, &&, !=, >, >=, <, <=, ==; are there any I'm missing?).  Some example searches:
+	a. (((tag.person=="Alice" || tag.person=="Bob") && tag.person!="Carol" && tag.event=="birthday") && tag.datetime:year>=2018)
+	b. (tag.scene=="indoor" || tag.scene.outdoor=="lake")
+	c. (tag.scene!="outdoor")
+7. I want to be able to export the currently selected files to a new directory structure based on tag categories the user selects (examples below).  Additional details:
+	a. This export should only ever export one copy of each image.  If a image has two (or more) event tags (birthday and vacation for example), an additional "birthday_vacation" directory should be created.  If an image matches the query but has no event tag, create an "Other" folder (for example, if I select birthdays but some images don't have date info, 
+	b. I want to be able to select whether the move is a copy (the original files remain in the source directories and the copied files are not added to the file manager database) or move (the original files are removed from the source directories, the source directories are removed if they're empty, and the database is updated to point at the new file location.
+	c. This should have the option to export image information to a `ROOT_EXPORT_DIR/image_metadata.csv` file
+	d. Use the `>` as an operator to indicate that the tag category should be expanded into a directory structure
+	e. Example of directory structures
+		i. "ROOT_EXPORT_DIR/{tag.datetime.year}/{tag.event>}" might yield a directory structures along the lines of:
+			* /ROOT_EXPORT_DIR/2018/christmas (all christmas pictures from 2018)
+			* /ROOT_EXPORT_DIR/2019/christmas (all christmas pictures from 2019)
+			* /ROOT_EXPORT_DIR/2018/birthday/Alice (all birthday pictures with the Alice tag from 2018)
+			* /ROOT_EXPORT_DIR/2018/birthday/Bob (all birthday pictures with the Bob tag from 2018)
+			* /ROOT_EXPORT_DIR/2019/vacation/Lake (all birthday pictures with the Lake tag from 2019)
+			* /ROOT_EXPORT_DIR/2019/vacation/City (all birthday pictures with the City tag from 2019)
+			* /ROOT_EXPORT_DIR/Unknown/vacation/Lake (all vacation pictures with the Lake tag and no year flag)
+		ii. "ROOT_EXPORT_DIR/{tag.datetime.year}/{tag.event}" might yield a directory structures along the lines of:
+			* /ROOT_EXPORT_DIR/2018/christmas (all christmas pictures from 2018)
+			* /ROOT_EXPORT_DIR/2019/christmas (all christmas pictures from 2019)
+			* /ROOT_EXPORT_DIR/2018/birthday (all birthday pictures with both the Alice and Bob tags from 2018)
+			* /ROOT_EXPORT_DIR/2019/vacation (all vacation pictures with both the Lake and City tags from 2018)
+			* /ROOT_EXPORT_DIR/Unknown/vacation/Lake (all vacation pictures with the Lake tag and no year flag)
+			
+8. Controls (general operation):
+	a. . ==> mark image for deletion
+	b. Ctrl+alt+d ==> mark all images in directory for deletion & skip to first image in next folder
+	c. Ctrl+d ==> Delete all image files marked for deletion from disk and recursively delete any resulting empty directories. Clear the Ctrl+z queue. Ask the user yes/no do you want to continue before actually deleting
+	d. Alt+d ==> Review images marked for deletion
+	e. / ==> next image & mark as tags reviewed
+	f. right/left arrow ==> next/previous image
+	g. Shift+right/left arrow ==> next/previous folder
+	h. up/down arrow ==> rotate CCW/CW
+	i. Ctrl+up/down ==> increase/decrease brightness
+	j. Alt+up/down ==> increase/decrease contrast
+	k. Alt+m ==> display these menu commands (neatly displayed and organized with a very very brief description - ideally only a couple words - indicating what each command does)
+	l. Alt+shift+t ==> display user-configured tag hotkeys
+	n. Ctrl+t ==> Add a new hotkey (keystroke + optional modifier) to apply tags (or sets of tags).  For example, I might want to configure `b` to assign `event:birthday` and `ctrl+shift+b` to assign `event:birthday` && `person:Alice` && `person:Bob`.  NOTE: Update the config file so this keystroke is available for this photo collection the next time the app is started.
+	n. Ctrl+shift+t ==> Clear a existing tag hotkey and update the config file.
+	o. = ==> increase GIF frame rate
+	p. - ==> decrease GIF frame rate
+	q. Ctrl+c ==> Copy scene, event, and people tags from the current image & store for applying to other images (DO NOT COPY OTHER TAGS/CATEGORIES)
+	r. Ctrl+v ==> Paste currently copied tags (Add if not present but don't remove tags)
+	s. Ctrl+z ==> undo previous action (keep 1k actions)
+	t. Ctrl+r ==> reload image and reset zoom, contrast, brightness, rotate, etc
+	u. Ctrl+shift+d ==> enter duplicate review mode
+	v. Ctrl+i ==> toggle information displayed 
+	w. Esc ==> Quit
+	x. Tab ==> toggle fit to canvas (original size, fit to canvas, fill canvas)
+	y. Click & drag ==> pan image (if zoomed in)
+	z. Mouse Wheel ==> increase/decrease zoom (zoom in/out of a point centered on the current mouse location)
+	aa. F1  ==> Check if directory has been added to database & add files if it hasn't
+	ab. F2  ==> Recursively remove empty dirs from source
+	ac. F3  ==> Review duplicate image groups
+	ad. F4  ==> add new directory (ask if user wants to supply a tag-matching string).
+	ae. F9  ==> Toggle levels of image info displayed
+		i. file number/total files
+		ii. File number/total files, img filename, img zoom levels
+		iii. File number/total files, img filename, img zoom levels, img dimensions
+	af. F10 ==> Goto specific image number
+	ag. F11 ==> toggle full screen
+	ah. F12 ==> toggle sequential (alphabetical by path and filename) vs. random order
+	ai. Alt+t ==> Manually edit the tag list of an image.  For example, I might want to take an image that is tagged with the following tags "person:Bob, date:2021, event:birthday" and edit that to be "person:Bob, date:01/21/2021, event:birthday" and have those tags auto-populated.
+	aj. Ctrl+shift+s ==> Resave the file with the current rotation information.
+9. Controls (duplicate review operation - sort images from largest to smallest filesize):
+	a. Ctrl+t ==> toggle view tags
+	b. Ctrl+shift+t ==> Display the list of all tags associated with the current duplicate group, allow edits to this list of tags
+	b. Page Up/Down ==> prev/next duplicate group
+	c. Ctrl+k ==> toggle mark image to keep
+	d. Ctrl+n ==> toggle mark image as not part of duplicate group
+	e. r/l arrow ==> next/previous image in group
+	f. Ctrl+d ==> delete all images from disk EXCEPT images marked with Ctrl+k or Ctrl+n & remove from database.  Warn if no images have been marked with either Ctrl+k or Ctrl+n.  Warn & ask to continue before deleting.  Check deleted images for tags and ask if some/all tags should be transferred to images being kept.  Do not transfer to "not in group" images.
+	g. F3 ==> exit duplicate review mode
+	h. Alt+m ==> display these menu commands (briefly summarized and neatly displayed)
+10. Config file elements:
+	a. size of Ctrl+z queue
+	b. Default zoom state (no zoom, fit to canvas, fill canvas)
+	c. Start full/screen (boolean)
+	d. custom hotkeys.  Sample hotkeys are:
+		i. b ==> event_tags/birthday
+		ii. g ==> people_tags/child1
+		iii. Shift+g ==> people_tags/child2
+		iv. h ==> scene_tags/hiking
+	e. Slideshow defaults:
+		i. image display duration (s)
+		ii. transition method (fade|wipe|replace)
+	
+
+lightweight viewer:
+1. Fast and light-weight (Compatible with Raspberry pi4B with 1GB RAM).  Should try to pre-load the next N images in the background and should retain the previous N images after being loaded for quicker switching between images.
+2. Full-screen and windowed mode
+3. Slideshow view mode with configurable settings
+4. Compatible with the database created by the desktop version, but also will recursively scan target directories if given a directory as input instead of a db
+5. Persistent config file (yaml maybe?) to control things like order, target directory, time each image is displayed, transition type, etc
+6. Tag selection interface if started from a DB
+7. Limited set of keyboard controls:
+	a. right/left arrow ==> next/previous image
+	b. Shift+right/left arrow ==> next/previous folder
+	c. up/down arrow ==> rotate CCW/CW
+	d. Ctrl+up/down ==> increase/decrease brightness
+	e. Alt+up/down ==> increase/decrease contrast
+	f. Alt+m ==> display these menu commands (neatly displayed and organized with what each command does)
+	g. plus ==> increase GIF frame rate
+	h. minus ==> decrease GIF frame rate
+	i. Ctrl+r ==> reload image and reset zoom, contrast, brightness, rotate, etc
+	j. Ctrl+i ==> toggle image information display
+	k. F9  ==> Toggle levels of image info displayed
+		i. file number/total files
+		ii. File number/total files, img filename, img zoom levels
+		iii. File number/total files, img filename, img zoom levels, img dimensions
+	l. Esc ==> Quit
+	m. Tab ==> toggle fit to canvas setting when loading/reloading an image (original size, fit to canvas, fill canvas)
+	n. Click & drag ==> pan image (if zoomed in)
+	o. Mouse Wheel ==> increase/decrease zoom (zoom in/out of a point centered on the current mouse location)
+	p. F10 ==> Goto specific image number
+	q. F11 ==> toggle full screen
+	r. F12 ==> toggle sequential (alphabetical by path and filename) vs. random order
+10. Config file elements:
+	a. size of Ctrl+z queue
+	b. Default zoom state (no zoom, fit to canvas, fill canvas)
+	c. Start full/screen (boolean)
+	d. custom hotkeys.  Sample hotkeys are:
+		i. b ==> event_tags/birthday
+		ii. g ==> people_tags/child1
+		iii. Shift+g ==> people_tags/child2
+		iv. h ==> scene_tags/hiking
+	e. Slideshow defaults:
+		i. image display duration (s)
+		ii. transition method (fade|wipe|replace)
+
+
+Raspberry Pi additional functionality:
+1. I'd like to run the slideshow automatically at startup using systemd; we'll need a shell script like `./system_control.sh -on` to enable the systemd components (and `./system_control.sh -off` to remove the systemd entries).
+2. If possible, I'd like the Pi to monitor the USB ports to see if a USB storage device is connected and follow the following pseudocode if one is detected (I'm not sure if it makes more sense for this to be a stand-alone monitor script or if it should be an option rolled into the light-weight image viewer that is turned on when `config.run_on_pi=true` or something):
+	While true:
+		If new_USB_storage:
+			Splash notification on screen that USB storage is detected
+			If it contains a "photo_manager" directory
+				If there are folders/files in `photo_manager/add/images/`	
+					Splash notification that files are being copied to the pi
+					recursively add these new images to the images folder on the Pi
+					Move any folders/images in `photo_manager/add/images` to the corresponding location in `photo_manager/existing/images`
+				If there are folders/files in `photo_manager/remove/images`
+					Splash notification that files are being removed from the pi
+					Recursively delete these images from the images folder on the pi
+					Empty the `photo_manager/remove` folder on the USB drive
+				If there is a config file `photo_manager/add/`
+					Replace the config file on the Pi and update all the settings to make sure they're current (such as the image display duration)
+					Move the config file to the `photo_manager/existing` folder on the USB drive
+			else
+				create the "photo_manager" directory structure
+			Splash notification that files are being sync'd from the pi to the USB drive
+			Sync the images on the pi to the `photo_manager/existing/images` directory
+			Sync the config file to `photo_manager/existing/`
+
+		
+	
