@@ -16,6 +16,7 @@ from photo_manager.scanner.datetime_parser import parse_datetime
 from photo_manager.scanner.exif import extract_exif
 from photo_manager.scanner.tag_template import (
     TagTemplate,
+    load_template_auto,
     load_template_file,
     match_filepath,
     validate_template,
@@ -71,11 +72,7 @@ class DirectoryScanner:
 
         # Load templates from file if not provided
         if templates is None:
-            template_path = directory / "load_template.txt"
-            if template_path.exists():
-                templates = load_template_file(str(template_path))
-            else:
-                templates = []
+            templates = load_template_auto(str(directory))
 
         # Collect all image files first
         image_files = self._find_image_files(directory, recursive)
@@ -113,10 +110,22 @@ class DirectoryScanner:
                 # Apply tag templates
                 if templates:
                     tag_values = match_filepath(rel_path_str, templates)
-                    for tag_path, value in tag_values.items():
-                        tag_def = self._db.resolve_tag_path(tag_path)
-                        if tag_def:
-                            self._db.set_image_tag(image_id, tag_def.id, value)
+                    if tag_values:
+                        for tag_path, value in tag_values.items():
+                            tag_def = self._db.resolve_tag_path(tag_path)
+                            if tag_def:
+                                self._db.set_image_tag(image_id, tag_def.id, value)
+                    else:
+                        # No template matched — check on_mismatch
+                        tmpl_opts = getattr(templates[0], "options", None)
+                        mismatch = (
+                            tmpl_opts.on_mismatch
+                            if tmpl_opts else "skip_file"
+                        )
+                        if mismatch == "tag_auto_tag_errors":
+                            image_record.id = image_id
+                            image_record.auto_tag_errors = True
+                            self._db.update_image(image_record)
 
                 result.added += 1
 

@@ -41,8 +41,13 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 class HelpOverlay(QWidget):
     """Full-screen help overlay showing keyboard shortcuts."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        sections: list[tuple[str, list[tuple[str, str]]]] | None = None,
+    ):
         super().__init__(parent)
+        self._sections = sections or HELP_SECTIONS
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._visible = False
         self.hide()
@@ -95,7 +100,7 @@ class HelpOverlay(QWidget):
         )
         y += 40
 
-        for section_name, shortcuts in HELP_SECTIONS:
+        for section_name, shortcuts in self._sections:
             # Section header
             painter.setFont(header_font)
             painter.setPen(QColor(100, 180, 255))

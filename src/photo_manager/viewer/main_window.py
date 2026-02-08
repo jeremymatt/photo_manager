@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._canvas)
         self._canvas.set_zoom_limits(
             self._config.get("ui.max_scroll_zoom_percent", 1000),
-            self._config.get("ui.max_fit_to_screen_zoom_percent", 100),
+            self._config.get("ui.max_fit_to_screen_zoom_percent", 250),
         )
 
         # Image loader
@@ -93,6 +93,12 @@ class MainWindow(QMainWindow):
         self._key_handler = KeyHandler(self)
         self._key_handler.action_triggered.connect(self._on_action)
 
+        # Connect zoom_changed signal so info overlay updates on scroll
+        self._canvas.zoom_changed.connect(lambda _: self._update_info())
+
+        # Navigation throttling: block nav until current image loads
+        self._image_loading = False
+
         # Fullscreen
         fs = start_fullscreen
         if fs is None:
@@ -106,10 +112,13 @@ class MainWindow(QMainWindow):
 
         # Load first image
         if file_list:
+            self._image_loading = True
             self._loader.goto(0)
 
     def _on_image_ready(self, index: int, pixmap: QPixmap) -> None:
         """Called when an image is loaded and ready to display."""
+        self._image_loading = False
+
         # Stop any playing GIF
         self._gif_player.stop()
         self._is_gif = False
@@ -143,19 +152,32 @@ class MainWindow(QMainWindow):
     def _on_slideshow_advance(self) -> None:
         self._loader.next()
 
+    _NAV_ACTIONS = {
+        Action.NEXT_IMAGE, Action.PREV_IMAGE,
+        Action.NEXT_FOLDER, Action.PREV_FOLDER,
+    }
+
     def _on_action(self, action: Action) -> None:
         # Dismiss help overlay on any action except toggle help
         if action != Action.TOGGLE_HELP and self._help.isVisible():
             self._help.dismiss()
             return
 
+        # Block navigation while an image is loading (except quit)
+        if action in self._NAV_ACTIONS and self._image_loading:
+            return
+
         if action == Action.NEXT_IMAGE:
+            self._image_loading = True
             self._loader.next()
         elif action == Action.PREV_IMAGE:
+            self._image_loading = True
             self._loader.previous()
         elif action == Action.NEXT_FOLDER:
+            self._image_loading = True
             self._loader.next_folder()
         elif action == Action.PREV_FOLDER:
+            self._image_loading = True
             self._loader.prev_folder()
         elif action == Action.ROTATE_CCW:
             self._canvas.rotate_ccw()
@@ -213,17 +235,21 @@ class MainWindow(QMainWindow):
             min=1, max=total,
         )
         if ok:
+            self._image_loading = True
             self._loader.goto(num - 1)
 
     def _update_info(self) -> None:
         filepath = self._loader.current_filepath
-        filename = Path(filepath).name if filepath else ""
+        p = Path(filepath) if filepath else None
+        filename = p.name if p else ""
+        folder = p.parent.name if p else ""
         pm = self._canvas._pixmap
         w = pm.width() if pm and not pm.isNull() else 0
         h = pm.height() if pm and not pm.isNull() else 0
         self._info.update_info(
             index=self._loader.current_index,
             total=self._loader.total,
+            folder=folder,
             filename=filename,
             zoom_percent=int(self._canvas.zoom_factor * 100),
             width=w,

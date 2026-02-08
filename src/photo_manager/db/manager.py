@@ -280,6 +280,62 @@ class DatabaseManager:
             parent_id = tag_def.id
         return tag_def
 
+    def get_tag_path(self, tag_id: int) -> str:
+        """Build dotted path for a tag by walking the parent chain.
+
+        Example: tag 'Alice' under 'birthday' under 'event' -> 'event.birthday.Alice'
+        """
+        parts: list[str] = []
+        current = self.get_tag_definition(tag_id)
+        while current:
+            parts.append(current.name)
+            if current.parent_id is not None:
+                current = self.get_tag_definition(current.parent_id)
+            else:
+                current = None
+        return ".".join(reversed(parts))
+
+    def ensure_tag_path(
+        self, dotted_path: str, leaf_data_type: str = "string"
+    ) -> TagDefinition:
+        """Resolve a dotted tag path, creating missing nodes.
+
+        All new intermediate nodes are created as categories.
+        If an existing leaf node gains a child, it is promoted to a category.
+        Returns the leaf TagDefinition.
+        """
+        parts = dotted_path.split(".")
+        parent_id: int | None = None
+        tag_def: TagDefinition | None = None
+
+        for i, part in enumerate(parts):
+            tag_def = self.get_tag_definition_by_name(part, parent_id)
+            is_leaf = (i == len(parts) - 1)
+
+            if tag_def is None:
+                # Create the missing node
+                new_tag = TagDefinition(
+                    name=part,
+                    parent_id=parent_id,
+                    data_type=leaf_data_type if is_leaf else "string",
+                    is_category=not is_leaf,
+                )
+                new_id = self.add_tag_definition(new_tag)
+                tag_def = self.get_tag_definition(new_id)
+            elif not is_leaf and not tag_def.is_category:
+                # Promote existing leaf to category since it's gaining children
+                self._ensure_open()
+                self._conn.execute(
+                    "UPDATE tag_definitions SET is_category = 1 WHERE id = ?",
+                    (tag_def.id,),
+                )
+                self._conn.commit()
+                tag_def.is_category = True
+
+            parent_id = tag_def.id
+
+        return tag_def
+
     # --- Image Tag CRUD ---
 
     def set_image_tag(

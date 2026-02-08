@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum, auto
 
-from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import QPainter, QPixmap, QTransform, QWheelEvent, QMouseEvent
 from PyQt6.QtWidgets import QWidget
 
@@ -17,6 +17,8 @@ class ZoomMode(Enum):
 
 class ImageCanvas(QWidget):
     """Widget that displays an image with zoom, pan, rotation, and adjustments."""
+
+    zoom_changed = pyqtSignal(float)  # emits zoom_factor when zoom changes
 
     ZOOM_STEP = 1.15  # 15% per scroll notch
 
@@ -90,6 +92,7 @@ class ImageCanvas(QWidget):
         self._zoom_mode = modes[(idx + 1) % len(modes)]
         self._pan_offset = QPointF(0, 0)
         self._compute_base_zoom()
+        self.zoom_changed.emit(self._zoom_factor)
         self.update()
         return self._zoom_mode
 
@@ -275,6 +278,7 @@ class ImageCanvas(QWidget):
                 self._pan_offset.y() - dy * (scale_ratio - 1),
             )
 
+        self.zoom_changed.emit(self._zoom_factor)
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:

@@ -18,6 +18,7 @@ class InfoOverlay(QWidget):
         self._level = 1  # 1, 2, or 3
         self._index = 0
         self._total = 0
+        self._folder = ""
         self._filename = ""
         self._zoom_percent = 100
         self._width = 0
@@ -41,6 +42,7 @@ class InfoOverlay(QWidget):
         self,
         index: int = 0,
         total: int = 0,
+        folder: str = "",
         filename: str = "",
         zoom_percent: int = 100,
         width: int = 0,
@@ -48,6 +50,7 @@ class InfoOverlay(QWidget):
     ) -> None:
         self._index = index
         self._total = total
+        self._folder = folder
         self._filename = filename
         self._zoom_percent = zoom_percent
         self._width = width
@@ -74,9 +77,9 @@ class InfoOverlay(QWidget):
         text_width = fm.horizontalAdvance(text) + padding * 2
         text_height = fm.height() + padding * 2
 
-        # Position at bottom-left
+        # Position at upper-left
         x = 10
-        y = self.height() - text_height - 10
+        y = 10
 
         # Background
         painter.setPen(Qt.PenStyle.NoPen)
@@ -97,6 +100,8 @@ class InfoOverlay(QWidget):
     def _build_text(self) -> str:
         parts = [f"[{self._index + 1}/{self._total}]"]
         if self._level >= 2:
+            if self._folder:
+                parts.append(f"{self._folder}/")
             parts.append(self._filename)
             parts.append(f"{self._zoom_percent}%")
         if self._level >= 3:

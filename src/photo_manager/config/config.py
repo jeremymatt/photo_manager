@@ -37,8 +37,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "performance": {
         "background_threads": 2,
         "image_cache_size_mb": 512,
-        "preload_next_images": 3,
-        "retain_previous_images": 2,
+        "preload_next_images": 5,
+        "retain_previous_images": 5,
         "thumbnail_size": [256, 256],
         "preload_timeout_seconds": 30,
     },
@@ -61,7 +61,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "undo_queue_size": 1000,
         "info_display_level": 1,
         "max_scroll_zoom_percent": 1000,
-        "max_fit_to_screen_zoom_percent": 100,
+        "max_fit_to_screen_zoom_percent": 250,
+    },
+    "organizer": {
+        "last_db_path": None,
+        "grid_columns": 5,
+        "default_view": "grid",
+        "thumbnail_cache_count": 500,
+        "tag_keybindings": {},
     },
     "logging": {
         "level": "INFO",

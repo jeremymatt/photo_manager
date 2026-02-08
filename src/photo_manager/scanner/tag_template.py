@@ -1,6 +1,6 @@
 """Tag template parser for mapping directory structures to tags.
 
-Template syntax:
+Template syntax (txt format):
     {category.subcategory}  - capture path segment as tag value
     *                       - match any single path segment (not captured)
     .*                      - match any file extension
@@ -8,14 +8,26 @@ Template syntax:
 Examples:
     ./{datetime.year}/{event.vacation}/*
     ./{datetime.year}/{event.vacation}/{person}.*
+
+YAML format (load_template.yaml):
+    version: 1
+    pattern: "{scene}/{filename}.{ext}"
+    options:
+      case_insensitive: true
+      require_full_match: true
+      on_mismatch: tag_auto_tag_errors
+    tags:
+      scene: "{scene}"
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
+
+import yaml
 
 if TYPE_CHECKING:
     from photo_manager.db.manager import DatabaseManager
@@ -30,11 +42,23 @@ class TemplateSegment:
 
 
 @dataclass
+class TemplateOptions:
+    """Options for YAML-based templates."""
+
+    case_insensitive: bool = False
+    require_full_match: bool = True
+    on_mismatch: str = "skip_file"  # tag_auto_tag_errors, skip_file, fail_import
+
+
+@dataclass
 class TagTemplate:
     """A parsed tag template that can match filepaths to extract tags."""
 
     raw_template: str
     segments: list[TemplateSegment]
+    options: TemplateOptions = field(default_factory=TemplateOptions)
+    # Back-reference mapping: {tag_path: "{capture_name}"}
+    tag_mapping: dict[str, str] = field(default_factory=dict)
 
     def match(self, filepath: str) -> dict[str, str] | None:
         """Match a filepath against this template.
@@ -67,20 +91,30 @@ class TagTemplate:
         if len(filepath_dirs) != len(dir_segments):
             return None
 
-        result: dict[str, str] = {}
+        # First pass: capture all named groups from pattern segments
+        captures: dict[str, str] = {}
 
         # Match directory segments
         for seg, dir_part in zip(dir_segments, filepath_dirs):
             if seg.tag_path is not None:
-                result[seg.tag_path] = dir_part
+                captures[seg.tag_path] = dir_part
 
         # Match filename segment
         if file_segment is not None and file_segment.tag_path is not None:
-            # Strip extension for capture
             name_without_ext = PurePosixPath(filepath_filename).stem
-            result[file_segment.tag_path] = name_without_ext
+            captures[file_segment.tag_path] = name_without_ext
 
-        return result
+        # If we have a tag_mapping (YAML format), resolve back-references
+        if self.tag_mapping:
+            result: dict[str, str] = {}
+            for tag_path, ref in self.tag_mapping.items():
+                resolved = _resolve_back_reference(ref, captures)
+                if resolved is not None:
+                    result[tag_path] = resolved
+            return result
+
+        # Legacy (txt format): captures are used directly as tag assignments
+        return captures
 
 
 def parse_template(template_str: str) -> TagTemplate:
@@ -153,18 +187,32 @@ def validate_template(
 ) -> list[str]:
     """Validate a template's tag references against the database.
 
+    For YAML templates, validates the tag_mapping keys (DB tag paths).
+    For txt templates, validates the segment tag_paths.
     Returns a list of warning messages for unknown tag paths.
     """
     warnings: list[str] = []
-    for segment in template.segments:
-        if segment.tag_path is None:
-            continue
-        tag_def = db.resolve_tag_path(segment.tag_path)
-        if tag_def is None:
-            warnings.append(
-                f"Unknown tag path '{segment.tag_path}' in template "
-                f"'{template.raw_template}'"
-            )
+
+    if template.tag_mapping:
+        # YAML format: validate tag_mapping keys (the actual DB paths)
+        for tag_path in template.tag_mapping:
+            tag_def = db.resolve_tag_path(tag_path)
+            if tag_def is None:
+                warnings.append(
+                    f"Unknown tag path '{tag_path}' in template "
+                    f"'{template.raw_template}'"
+                )
+    else:
+        # txt format: validate segment tag paths
+        for segment in template.segments:
+            if segment.tag_path is None:
+                continue
+            tag_def = db.resolve_tag_path(segment.tag_path)
+            if tag_def is None:
+                warnings.append(
+                    f"Unknown tag path '{segment.tag_path}' in template "
+                    f"'{template.raw_template}'"
+                )
     return warnings
 
 
@@ -181,3 +229,134 @@ def match_filepath(
         if result is not None:
             return result
     return {}
+
+
+def _resolve_back_reference(
+    ref: str, captures: dict[str, str]
+) -> str | None:
+    """Resolve a back-reference like '{scene}' against captured values."""
+    match = re.match(r"^\{([^}]+)\}$", ref)
+    if match:
+        capture_name = match.group(1)
+        return captures.get(capture_name)
+    # Literal value (no braces)
+    return ref
+
+
+def _parse_yaml_pattern(pattern: str) -> list[TemplateSegment]:
+    """Parse a YAML template pattern into segments.
+
+    Pattern format: "{scene}/{filename}.{ext}"
+    Named groups like {name} capture path segments.
+    {filename} and {ext} are special: they match the filename and extension.
+    """
+    pattern = pattern.strip().replace("\\", "/")
+    if pattern.startswith("./"):
+        pattern = pattern[2:]
+
+    parts = pattern.split("/")
+    segments: list[TemplateSegment] = []
+
+    for i, part in enumerate(parts):
+        is_last = i == len(parts) - 1
+
+        if part in ("*", ".*"):
+            segments.append(TemplateSegment(tag_path=None, is_filename=is_last))
+        elif "{" in part:
+            # Check for filename pattern like {filename}.{ext}
+            fname_match = re.match(
+                r"^\{([^}]+)\}\.\{([^}]+)\}$", part
+            )
+            if fname_match and is_last:
+                # Filename + extension pattern — capture just the name part
+                capture_name = fname_match.group(1)
+                segments.append(TemplateSegment(
+                    tag_path=capture_name, is_filename=True
+                ))
+            else:
+                # Simple capture group like {scene}
+                cap_match = re.match(r"^\{([^}]+)\}(\.\*)?$", part)
+                if cap_match:
+                    segments.append(TemplateSegment(
+                        tag_path=cap_match.group(1), is_filename=is_last
+                    ))
+                else:
+                    segments.append(TemplateSegment(
+                        tag_path=None, is_filename=is_last
+                    ))
+        else:
+            segments.append(TemplateSegment(tag_path=None, is_filename=is_last))
+
+    return segments
+
+
+def load_yaml_template(template_path: str) -> TagTemplate:
+    """Load a YAML-format tag template.
+
+    Expected format:
+        version: 1
+        pattern: "{scene}/{filename}.{ext}"
+        options:
+          case_insensitive: true
+          require_full_match: true
+          on_mismatch: tag_auto_tag_errors
+        tags:
+          scene: "{scene}"
+    """
+    with open(template_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid YAML template: expected dict, got {type(data)}")
+
+    pattern = data.get("pattern", "")
+    if not pattern:
+        raise ValueError("YAML template missing 'pattern' field")
+
+    # Parse options
+    opts_data = data.get("options", {})
+    options = TemplateOptions(
+        case_insensitive=opts_data.get("case_insensitive", False),
+        require_full_match=opts_data.get("require_full_match", True),
+        on_mismatch=opts_data.get("on_mismatch", "skip_file"),
+    )
+
+    # Parse tag mapping (back-references)
+    tag_mapping: dict[str, str] = {}
+    tags_data = data.get("tags", {})
+    for tag_path, ref in tags_data.items():
+        tag_mapping[tag_path] = str(ref)
+
+    # Parse pattern into segments
+    segments = _parse_yaml_pattern(pattern)
+
+    return TagTemplate(
+        raw_template=pattern,
+        segments=segments,
+        options=options,
+        tag_mapping=tag_mapping,
+    )
+
+
+def load_template_auto(directory: str) -> list[TagTemplate]:
+    """Auto-detect and load templates from a directory.
+
+    Looks for load_template.yaml first, then load_template.txt.
+    Returns a list of TagTemplate objects (empty if no template found).
+    """
+    from pathlib import Path
+
+    dir_path = Path(directory)
+
+    # Prefer YAML format
+    for yaml_name in ("load_template.yaml", "load_template.yml"):
+        yaml_path = dir_path / yaml_name
+        if yaml_path.exists():
+            return [load_yaml_template(str(yaml_path))]
+
+    # Fall back to txt format
+    txt_path = dir_path / "load_template.txt"
+    if txt_path.exists():
+        return load_template_file(str(txt_path))
+
+    return []

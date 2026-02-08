@@ -230,3 +230,50 @@ class TestTagTree:
 
         carol = db.get_tag_definition_by_name("Carol", person.id)
         assert carol is not None
+
+    def test_get_tag_path(self, db):
+        # event.birthday.Alice exists in default tree
+        alice = db.resolve_tag_path("event.birthday.Alice")
+        assert alice is not None
+        path = db.get_tag_path(alice.id)
+        assert path == "event.birthday.Alice"
+
+        # Root-level tag
+        event = db.resolve_tag_path("event")
+        assert db.get_tag_path(event.id) == "event"
+
+    def test_ensure_tag_path_existing(self, db):
+        # Should return existing tag without creating anything
+        alice = db.resolve_tag_path("event.birthday.Alice")
+        result = db.ensure_tag_path("event.birthday.Alice")
+        assert result.id == alice.id
+
+    def test_ensure_tag_path_creates_intermediates(self, db):
+        # Create entirely new path
+        result = db.ensure_tag_path("weather.sunny")
+        assert result is not None
+        assert result.name == "sunny"
+        assert not result.is_category
+
+        # Verify intermediate was created as category
+        weather = db.resolve_tag_path("weather")
+        assert weather is not None
+        assert weather.is_category
+
+        # Verify full path resolves
+        assert db.resolve_tag_path("weather.sunny") is not None
+
+    def test_ensure_tag_path_promotes_leaf_to_category(self, db):
+        # Alice under person is a leaf
+        alice = db.resolve_tag_path("person.Alice")
+        assert not alice.is_category
+
+        # Adding a child should promote it to category
+        db.ensure_tag_path("person.Alice.portrait")
+        alice_after = db.resolve_tag_path("person.Alice")
+        assert alice_after.is_category
+
+        # The child should exist
+        portrait = db.resolve_tag_path("person.Alice.portrait")
+        assert portrait is not None
+        assert not portrait.is_category

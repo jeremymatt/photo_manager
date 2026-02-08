@@ -142,12 +142,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: '{args.path}' does not exist.")
         return 1
 
-    # Load config
+    # Load config: explicit --config flag, or auto viewer_config.yml in target dir
     config = ConfigManager()
     if args.config:
         config_path = Path(args.config)
         if config_path.exists():
             config.load(config_path)
+    else:
+        # Determine the directory to look for viewer_config.yml
+        if target_path.is_dir():
+            config_dir = target_path
+        else:
+            config_dir = target_path.parent
+        auto_config_path = config_dir / "viewer_config.yml"
+        if auto_config_path.exists():
+            config.load(auto_config_path)
+        else:
+            # Create default viewer_config.yml
+            config.save(auto_config_path)
 
     # Build file list
     file_list = load_file_list(target_path, config, args.query)

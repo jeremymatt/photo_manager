@@ -13,7 +13,7 @@ class TestConfigManager:
         cm = ConfigManager()
         assert cm.get("ui.default_zoom") == "fit_to_canvas"
         assert cm.get("database.path") == ".photo_manager.db"
-        assert cm.get("performance.preload_next_images") == 3
+        assert cm.get("performance.preload_next_images") == 5
 
     def test_get_dotted_key(self):
         cm = ConfigManager()
