@@ -60,7 +60,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "theme": "dark",
         "undo_queue_size": 1000,
         "info_display_level": 1,
-        "max_zoom_percent": 200,
+        "max_scroll_zoom_percent": 1000,
+        "max_fit_to_screen_zoom_percent": 100,
     },
     "logging": {
         "level": "INFO",
