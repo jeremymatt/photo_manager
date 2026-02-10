@@ -36,7 +36,9 @@ class HashThread(QThread):
         try:
             images = thread_db.get_all_images()
             unhashed = [
-                img for img in images if img.phash_0 is None
+                img for img in images
+                if img.phash_0 is None or img.phash_180 is None
+                or img.phash_hmirror is None
             ]
             total = len(unhashed)
             hashed = 0
@@ -57,8 +59,14 @@ class HashThread(QThread):
                 if result is not None:
                     img.phash_0 = result.phash_0
                     img.phash_90 = result.phash_90
+                    img.phash_180 = result.phash_180
+                    img.phash_270 = result.phash_270
                     img.dhash_0 = result.dhash_0
                     img.dhash_90 = result.dhash_90
+                    img.dhash_180 = result.dhash_180
+                    img.dhash_270 = result.dhash_270
+                    img.phash_hmirror = result.phash_hmirror
+                    img.dhash_hmirror = result.dhash_hmirror
                     thread_db.update_image(img)
                     hashed += 1
 

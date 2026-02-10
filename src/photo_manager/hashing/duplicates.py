@@ -19,7 +19,7 @@ ProgressCallback = Callable[[int, int], None]
 class DuplicateDetector:
     """Detect duplicate images using perceptual hash comparison."""
 
-    def __init__(self, db: DatabaseManager, threshold: int = 5):
+    def __init__(self, db: DatabaseManager, threshold: int = 10):
         self._db = db
         self._threshold = threshold
 
@@ -30,8 +30,8 @@ class DuplicateDetector:
         """Find groups of duplicate images in the database.
 
         Two images are considered duplicates when BOTH their pHash AND dHash
-        are within the threshold distance, checking all rotation combinations
-        (0-0, 0-90, 90-0, 90-90).
+        are within the threshold distance at the SAME rotation pair, checking
+        all 16 rotation combinations (4 rotations × 4 rotations).
 
         Returns a list of groups, where each group is a list of image IDs
         sorted by file_size descending.
@@ -103,46 +103,80 @@ class DuplicateDetector:
         return group_ids
 
     def _are_duplicates(self, a: ImageRecord, b: ImageRecord) -> bool:
-        """Check if two images are duplicates using rotation-aware hash comparison."""
-        # Get all pHash values for each image
-        a_phashes = self._get_hash_values(a.phash_0, a.phash_90)
-        b_phashes = self._get_hash_values(b.phash_0, b.phash_90)
-        a_dhashes = self._get_hash_values(a.dhash_0, a.dhash_90)
-        b_dhashes = self._get_hash_values(b.dhash_0, b.dhash_90)
+        """Check if two images are duplicates using rotation-aware hash comparison.
 
-        if not a_phashes or not b_phashes or not a_dhashes or not b_dhashes:
+        For each of the 16 rotation pairs (4 rotations of A × 4 rotations of B),
+        both pHash AND dHash must be within threshold at the SAME rotation pair.
+
+        Also checks mirror: each image's mirror hash pair is compared against
+        the other image's non-mirror rotation pairs.
+        """
+        # Build paired (phash, dhash) tuples for each rotation
+        a_pairs = self._get_hash_pairs(a)
+        b_pairs = self._get_hash_pairs(b)
+
+        if not a_pairs or not b_pairs:
             return False
 
-        # Check all rotation combinations
-        # Both pHash AND dHash must match for at least one rotation combo
-        for a_ph in a_phashes:
-            for b_ph in b_phashes:
-                phash_dist = a_ph - b_ph
-                if phash_dist <= self._threshold:
-                    # pHash matches - now check dHash at same rotations
-                    for a_dh in a_dhashes:
-                        for b_dh in b_dhashes:
-                            dhash_dist = a_dh - b_dh
-                            if dhash_dist <= self._threshold:
-                                return True
+        # Check all rotation combinations — both hashes must match at same pair
+        for a_ph, a_dh in a_pairs:
+            for b_ph, b_dh in b_pairs:
+                if (a_ph - b_ph) <= self._threshold and (a_dh - b_dh) <= self._threshold:
+                    return True
+
+        # Check mirror: A's mirror vs B's rotations, and B's mirror vs A's rotations
+        a_mirror = self._get_mirror_pair(a)
+        b_mirror = self._get_mirror_pair(b)
+
+        if a_mirror:
+            for b_ph, b_dh in b_pairs:
+                if (a_mirror[0] - b_ph) <= self._threshold and (a_mirror[1] - b_dh) <= self._threshold:
+                    return True
+
+        if b_mirror:
+            for a_ph, a_dh in a_pairs:
+                if (b_mirror[0] - a_ph) <= self._threshold and (b_mirror[1] - a_dh) <= self._threshold:
+                    return True
+
         return False
 
-    def _get_hash_values(
-        self, hash_0: str | None, hash_90: str | None
-    ) -> list[imagehash.ImageHash]:
-        """Convert hash strings to ImageHash objects."""
-        result = []
-        if hash_0:
+    def _get_hash_pairs(
+        self, img: ImageRecord,
+    ) -> list[tuple[imagehash.ImageHash, imagehash.ImageHash]]:
+        """Get paired (phash, dhash) for each rotation of an image."""
+        rotations = [
+            (img.phash_0, img.dhash_0),
+            (img.phash_90, img.dhash_90),
+            (img.phash_180, img.dhash_180),
+            (img.phash_270, img.dhash_270),
+        ]
+        pairs = []
+        for ph_str, dh_str in rotations:
+            if ph_str and dh_str:
+                try:
+                    pairs.append((
+                        imagehash.hex_to_hash(ph_str),
+                        imagehash.hex_to_hash(dh_str),
+                    ))
+                except Exception:
+                    pass
+        return pairs
+
+    def _get_mirror_pair(
+        self, img: ImageRecord,
+    ) -> tuple[imagehash.ImageHash, imagehash.ImageHash] | None:
+        """Get the (phash, dhash) pair for the horizontal mirror of an image."""
+        ph_str = img.phash_hmirror
+        dh_str = img.dhash_hmirror
+        if ph_str and dh_str:
             try:
-                result.append(imagehash.hex_to_hash(hash_0))
+                return (
+                    imagehash.hex_to_hash(ph_str),
+                    imagehash.hex_to_hash(dh_str),
+                )
             except Exception:
                 pass
-        if hash_90:
-            try:
-                result.append(imagehash.hex_to_hash(hash_90))
-            except Exception:
-                pass
-        return result
+        return None
 
     def _get_file_size(
         self, image_id: int, images: list[ImageRecord]

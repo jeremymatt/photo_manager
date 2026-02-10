@@ -58,11 +58,7 @@ class QueryEngine:
         ast = parse_query(expression)
         sql, params = self.to_sql(ast)
         rows = self._db.execute_query(sql, tuple(params))
-        # Convert Row objects back to tuples for _row_to_image
-        return [
-            self._db._row_to_image(tuple(row))
-            for row in rows
-        ]
+        return [self._db._row_to_image(row) for row in rows]
 
     def to_sql(self, ast: ASTNode) -> tuple[str, list[Any]]:
         """Convert an AST to a SQL query.

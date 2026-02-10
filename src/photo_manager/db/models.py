@@ -32,8 +32,14 @@ class ImageRecord:
     state: str | None = None
     phash_0: str | None = None
     phash_90: str | None = None
+    phash_180: str | None = None
+    phash_270: str | None = None
     dhash_0: str | None = None
     dhash_90: str | None = None
+    dhash_180: str | None = None
+    dhash_270: str | None = None
+    phash_hmirror: str | None = None
+    dhash_hmirror: str | None = None
     favorite: bool = False
     to_delete: bool = False
     reviewed: bool = False

@@ -135,7 +135,7 @@ class DuplicateDetectionDialog(QDialog):
     def _start_detection(self) -> None:
         self._status_label.setText("Detecting duplicates...")
         threshold = self._config.get(
-            "duplicate_detection.similarity_threshold", 5
+            "duplicate_detection.similarity_threshold", 10
         )
         self._thread = _DuplicateThread(
             str(self._db.db_path), threshold

@@ -42,6 +42,7 @@ class DatabaseManager:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA_V1)
@@ -59,6 +60,7 @@ class DatabaseManager:
         if not self._db_path.exists():
             raise FileNotFoundError(f"Database not found: {self._db_path}")
         self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         version = self._get_schema_version()
@@ -93,10 +95,13 @@ class DatabaseManager:
                 filepath, filename, file_size, width, height,
                 datetime, year, month, day, hour, minute, second,
                 latitude, longitude, has_lat_lon, city, town, state,
-                phash_0, phash_90, dhash_0, dhash_90,
+                phash_0, phash_90, phash_180, phash_270,
+                dhash_0, dhash_90, dhash_180, dhash_270,
+                phash_hmirror, dhash_hmirror,
                 favorite, to_delete, reviewed, auto_tag_errors,
                 date_added, date_modified
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 image.filepath, image.filename, image.file_size,
                 image.width, image.height,
@@ -104,7 +109,9 @@ class DatabaseManager:
                 image.hour, image.minute, image.second,
                 image.latitude, image.longitude, int(image.has_lat_lon),
                 image.city, image.town, image.state,
-                image.phash_0, image.phash_90, image.dhash_0, image.dhash_90,
+                image.phash_0, image.phash_90, image.phash_180, image.phash_270,
+                image.dhash_0, image.dhash_90, image.dhash_180, image.dhash_270,
+                image.phash_hmirror, image.dhash_hmirror,
                 int(image.favorite), int(image.to_delete),
                 int(image.reviewed), int(image.auto_tag_errors),
                 now, now,
@@ -154,7 +161,9 @@ class DatabaseManager:
                 filepath=?, filename=?, file_size=?, width=?, height=?,
                 datetime=?, year=?, month=?, day=?, hour=?, minute=?, second=?,
                 latitude=?, longitude=?, has_lat_lon=?, city=?, town=?, state=?,
-                phash_0=?, phash_90=?, dhash_0=?, dhash_90=?,
+                phash_0=?, phash_90=?, phash_180=?, phash_270=?,
+                dhash_0=?, dhash_90=?, dhash_180=?, dhash_270=?,
+                phash_hmirror=?, dhash_hmirror=?,
                 favorite=?, to_delete=?, reviewed=?, auto_tag_errors=?,
                 date_modified=?
             WHERE id=?""",
@@ -165,7 +174,9 @@ class DatabaseManager:
                 image.hour, image.minute, image.second,
                 image.latitude, image.longitude, int(image.has_lat_lon),
                 image.city, image.town, image.state,
-                image.phash_0, image.phash_90, image.dhash_0, image.dhash_90,
+                image.phash_0, image.phash_90, image.phash_180, image.phash_270,
+                image.dhash_0, image.dhash_90, image.dhash_180, image.dhash_270,
+                image.phash_hmirror, image.dhash_hmirror,
                 int(image.favorite), int(image.to_delete),
                 int(image.reviewed), int(image.auto_tag_errors),
                 now, image.id,
@@ -481,11 +492,7 @@ class DatabaseManager:
     ) -> list[sqlite3.Row]:
         """Execute a raw SQL query and return results."""
         self._ensure_open()
-        self._conn.row_factory = sqlite3.Row
-        try:
-            return self._conn.execute(sql, params).fetchall()
-        finally:
-            self._conn.row_factory = None
+        return self._conn.execute(sql, params).fetchall()
 
     # --- Private helpers ---
 
@@ -503,8 +510,30 @@ class DatabaseManager:
             return 0
 
     def _apply_migrations(self, from_version: int) -> None:
-        # Future migrations go here
-        pass
+        from photo_manager.db.schema import MIGRATION_V1_TO_V2, MIGRATION_V2_TO_V3
+        now = datetime.now(timezone.utc).isoformat()
+
+        if from_version < 2:
+            for stmt in MIGRATION_V1_TO_V2.strip().split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    self._conn.execute(stmt)
+            self._conn.execute(
+                "INSERT INTO schema_version (version, applied_date) VALUES (?, ?)",
+                (2, now),
+            )
+            self._conn.commit()
+
+        if from_version < 3:
+            for stmt in MIGRATION_V2_TO_V3.strip().split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    self._conn.execute(stmt)
+            self._conn.execute(
+                "INSERT INTO schema_version (version, applied_date) VALUES (?, ?)",
+                (3, now),
+            )
+            self._conn.commit()
 
     def _seed_default_tags(self) -> None:
         """Insert the default tag tree into a fresh database."""
@@ -528,37 +557,43 @@ class DatabaseManager:
             )
             name_to_id[(name, parent_id)] = cursor.lastrowid
 
-    def _row_to_image(self, row: tuple) -> ImageRecord:
+    def _row_to_image(self, row) -> ImageRecord:
         return ImageRecord(
-            id=row[0],
-            filepath=row[1],
-            filename=row[2],
-            file_size=row[3],
-            width=row[4],
-            height=row[5],
-            datetime_str=row[6],
-            year=row[7],
-            month=row[8],
-            day=row[9],
-            hour=row[10],
-            minute=row[11],
-            second=row[12],
-            latitude=row[13],
-            longitude=row[14],
-            has_lat_lon=bool(row[15]),
-            city=row[16],
-            town=row[17],
-            state=row[18],
-            phash_0=row[19],
-            phash_90=row[20],
-            dhash_0=row[21],
-            dhash_90=row[22],
-            favorite=bool(row[23]),
-            to_delete=bool(row[24]),
-            reviewed=bool(row[25]),
-            auto_tag_errors=bool(row[26]),
-            date_added=row[27],
-            date_modified=row[28],
+            id=row["id"],
+            filepath=row["filepath"],
+            filename=row["filename"],
+            file_size=row["file_size"],
+            width=row["width"],
+            height=row["height"],
+            datetime_str=row["datetime"],
+            year=row["year"],
+            month=row["month"],
+            day=row["day"],
+            hour=row["hour"],
+            minute=row["minute"],
+            second=row["second"],
+            latitude=row["latitude"],
+            longitude=row["longitude"],
+            has_lat_lon=bool(row["has_lat_lon"]),
+            city=row["city"],
+            town=row["town"],
+            state=row["state"],
+            phash_0=row["phash_0"],
+            phash_90=row["phash_90"],
+            phash_180=row["phash_180"],
+            phash_270=row["phash_270"],
+            dhash_0=row["dhash_0"],
+            dhash_90=row["dhash_90"],
+            dhash_180=row["dhash_180"],
+            dhash_270=row["dhash_270"],
+            phash_hmirror=row["phash_hmirror"],
+            dhash_hmirror=row["dhash_hmirror"],
+            favorite=bool(row["favorite"]),
+            to_delete=bool(row["to_delete"]),
+            reviewed=bool(row["reviewed"]),
+            auto_tag_errors=bool(row["auto_tag_errors"]),
+            date_added=row["date_added"],
+            date_modified=row["date_modified"],
         )
 
     def _row_to_tag_def(self, row: tuple) -> TagDefinition:

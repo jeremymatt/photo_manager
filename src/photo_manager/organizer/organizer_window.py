@@ -1124,8 +1124,14 @@ class OrganizerWindow(QMainWindow):
                 if hashes:
                     record.phash_0 = hashes.phash_0
                     record.phash_90 = hashes.phash_90
+                    record.phash_180 = hashes.phash_180
+                    record.phash_270 = hashes.phash_270
                     record.dhash_0 = hashes.dhash_0
                     record.dhash_90 = hashes.dhash_90
+                    record.dhash_180 = hashes.dhash_180
+                    record.dhash_270 = hashes.dhash_270
+                    record.phash_hmirror = hashes.phash_hmirror
+                    record.dhash_hmirror = hashes.dhash_hmirror
                 self._db.update_image(record)
 
             # Evict cached pixmap and reload the image from disk

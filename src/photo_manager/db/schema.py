@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 3
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS images (
@@ -27,8 +27,14 @@ CREATE TABLE IF NOT EXISTS images (
     state TEXT,
     phash_0 TEXT,
     phash_90 TEXT,
+    phash_180 TEXT,
+    phash_270 TEXT,
     dhash_0 TEXT,
     dhash_90 TEXT,
+    dhash_180 TEXT,
+    dhash_270 TEXT,
+    phash_hmirror TEXT,
+    dhash_hmirror TEXT,
     favorite INTEGER DEFAULT 0,
     to_delete INTEGER DEFAULT 0,
     reviewed INTEGER DEFAULT 0,
@@ -85,6 +91,18 @@ CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_tag_definitions_parent ON tag_definitions(parent_id);
 CREATE INDEX IF NOT EXISTS idx_duplicate_members_group ON duplicate_group_members(group_id);
 CREATE INDEX IF NOT EXISTS idx_duplicate_members_image ON duplicate_group_members(image_id);
+"""
+
+MIGRATION_V1_TO_V2 = """
+ALTER TABLE images ADD COLUMN phash_180 TEXT;
+ALTER TABLE images ADD COLUMN phash_270 TEXT;
+ALTER TABLE images ADD COLUMN dhash_180 TEXT;
+ALTER TABLE images ADD COLUMN dhash_270 TEXT;
+"""
+
+MIGRATION_V2_TO_V3 = """
+ALTER TABLE images ADD COLUMN phash_hmirror TEXT;
+ALTER TABLE images ADD COLUMN dhash_hmirror TEXT;
 """
 
 # Default tag tree: (name, parent_name_or_None, data_type, is_category)

@@ -21,19 +21,25 @@ ProgressCallback = Callable[[int, int, str], None]
 
 @dataclass
 class ImageHashes:
-    """Perceptual hashes for an image at two orientations."""
+    """Perceptual hashes for an image at four orientations plus mirror."""
 
     phash_0: str
     phash_90: str
+    phash_180: str
+    phash_270: str
     dhash_0: str
     dhash_90: str
+    dhash_180: str
+    dhash_270: str
+    phash_hmirror: str = ""
+    dhash_hmirror: str = ""
 
 
 def compute_hashes(filepath: str | Path) -> ImageHashes | None:
-    """Compute perceptual hashes for an image at 0 and 90 degree rotations.
+    """Compute perceptual hashes for an image at 0, 90, 180, and 270 degrees.
 
     The image is first corrected for EXIF orientation, then hashed at
-    its corrected orientation (0) and rotated 90 degrees.
+    all four rotations to enable rotation-aware duplicate detection.
     """
     try:
         img = get_oriented_image(filepath)
@@ -50,14 +56,38 @@ def compute_hashes(filepath: str | Path) -> ImageHashes | None:
         phash_90 = str(imagehash.phash(img_90))
         dhash_90 = str(imagehash.dhash(img_90))
 
+        # Hash at 180 degrees
+        img_180 = img.transpose(Image.Transpose.ROTATE_180)
+        phash_180 = str(imagehash.phash(img_180))
+        dhash_180 = str(imagehash.dhash(img_180))
+
+        # Hash at 270 degrees
+        img_270 = img.transpose(Image.Transpose.ROTATE_270)
+        phash_270 = str(imagehash.phash(img_270))
+        dhash_270 = str(imagehash.dhash(img_270))
+
+        # Hash horizontal mirror (left-right flip at 0°)
+        img_mirror = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        phash_hmirror = str(imagehash.phash(img_mirror))
+        dhash_hmirror = str(imagehash.dhash(img_mirror))
+
         img.close()
         img_90.close()
+        img_180.close()
+        img_270.close()
+        img_mirror.close()
 
         return ImageHashes(
             phash_0=phash_0,
             phash_90=phash_90,
+            phash_180=phash_180,
+            phash_270=phash_270,
             dhash_0=dhash_0,
             dhash_90=dhash_90,
+            dhash_180=dhash_180,
+            dhash_270=dhash_270,
+            phash_hmirror=phash_hmirror,
+            dhash_hmirror=dhash_hmirror,
         )
     except Exception as e:
         logger.error(f"Failed to compute hashes for {filepath}: {e}")
