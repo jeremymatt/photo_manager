@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
-from photo_manager.config.config import ConfigManager
+from photo_manager.config.config import ConfigManager, get_db_config_path
 from photo_manager.db.manager import DatabaseManager
 from photo_manager.organizer.organizer_window import OrganizerWindow
 
@@ -56,7 +56,7 @@ def create_organizer_app(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Photo Manager Organizer")
 
-    # Config
+    # Config — basic load first to get last_db_path if needed
     config = ConfigManager()
     if args.config:
         config.load(args.config)
@@ -88,7 +88,15 @@ def create_organizer_app(argv: list[str] | None = None) -> int:
         if not db_path:
             return 0
         db.open_database(db_path)
-        config.set("organizer.last_db_path", db_path)
+
+    config.set("organizer.last_db_path", db_path)
+
+    # Reload config with per-DB layering (DEFAULT <- db_config <- cli_config)
+    db_config_path = get_db_config_path(db_path)
+    config.load_layered(
+        db_config_path=db_config_path,
+        cli_config_path=args.config,
+    )
 
     # Create main window
     window = OrganizerWindow(

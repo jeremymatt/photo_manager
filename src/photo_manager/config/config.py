@@ -68,6 +68,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "grid_columns": 5,
         "default_view": "grid",
         "thumbnail_cache_count": 500,
+        "quick_toggle_bindings": {
+            "F": ["set_favorite"],
+            "D": ["set_to_delete"],
+            "R": ["set_reviewed"],
+            "Ctrl+.": ["clear_to_delete", "next_image"],
+        },
         "tag_keybindings": {},
     },
     "logging": {
@@ -89,11 +95,18 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def get_db_config_path(db_path: str | Path) -> Path:
+    """Return <db_dir>/<db_stem>.config.yaml for a given database path."""
+    db_path = Path(db_path)
+    return db_path.parent / f"{db_path.stem}.config.yaml"
+
+
 class ConfigManager:
     """Load, save, and access YAML configuration with defaults."""
 
     def __init__(self, config_path: str | Path | None = None):
         self._path = Path(config_path) if config_path else None
+        self._session_path: Path | None = None
         self._config: dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
         if self._path and self._path.exists():
             self.load()
@@ -146,6 +159,49 @@ class ConfigManager:
                 target[key] = {}
             target = target[key]
         target[keys[-1]] = value
+
+    def load_layered(
+        self,
+        db_config_path: str | Path | None = None,
+        cli_config_path: str | Path | None = None,
+    ) -> None:
+        """Load config with layered priority: DEFAULT <- db_config <- cli_config.
+
+        Creates db_config_path with defaults if it doesn't exist.
+        Sets _session_path so save_session() persists changes to db config.
+        """
+        self._config = copy.deepcopy(DEFAULT_CONFIG)
+
+        if db_config_path:
+            db_config_path = Path(db_config_path)
+            self._session_path = db_config_path
+            if db_config_path.exists():
+                with open(db_config_path, "r", encoding="utf-8") as f:
+                    db_config = yaml.safe_load(f) or {}
+                self._config = _deep_merge(self._config, db_config)
+            else:
+                # Create default config file next to the DB
+                db_config_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(db_config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(
+                        self._config, f,
+                        default_flow_style=False, sort_keys=False,
+                    )
+
+        if cli_config_path:
+            cli_config_path = Path(cli_config_path)
+            if cli_config_path.exists():
+                with open(cli_config_path, "r", encoding="utf-8") as f:
+                    cli_config = yaml.safe_load(f) or {}
+                self._config = _deep_merge(self._config, cli_config)
+
+    def save_session(self) -> None:
+        """Save current config to the session (per-DB) config file."""
+        if self._session_path is None:
+            return
+        self._session_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._session_path, "w", encoding="utf-8") as f:
+            yaml.dump(self._config, f, default_flow_style=False, sort_keys=False)
 
     def reset(self) -> None:
         """Reset config to defaults."""

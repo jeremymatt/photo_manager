@@ -51,6 +51,37 @@ class ImageRecord:
         self.minute = dt.minute
         self.second = dt.second
 
+    def set_partial_datetime(
+        self,
+        year: int | None = None,
+        month: int | None = None,
+        day: int | None = None,
+        hour: int | None = None,
+        minute: int | None = None,
+        second: int | None = None,
+    ) -> None:
+        """Set datetime from partial values. Unknown date parts default to 1,
+        unknown time parts default to 0."""
+        if year is None:
+            # No year means no datetime at all
+            self.datetime_str = None
+            self.year = self.month = self.day = None
+            self.hour = self.minute = self.second = None
+            return
+        m = month if month is not None else 1
+        d = day if day is not None else 1
+        h = hour if hour is not None else 0
+        mi = minute if minute is not None else 0
+        s = second if second is not None else 0
+        dt = datetime(year, m, d, h, mi, s)
+        self.datetime_str = dt.isoformat()
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+
 
 @dataclass
 class TagDefinition:

@@ -63,6 +63,11 @@ class ImageCache:
         self._current_size += size
         self._cache.move_to_end(index)
 
+    def remove(self, index: int) -> None:
+        if index in self._cache:
+            self._current_size -= self._estimate_size(self._cache[index])
+            del self._cache[index]
+
     def clear(self) -> None:
         self._cache.clear()
         self._current_size = 0
@@ -249,6 +254,11 @@ class ImageLoader(QObject):
         self._cache.clear()
         self._load_current()
 
+    def invalidate(self, index: int) -> None:
+        """Remove a cached image so it will be reloaded from disk."""
+        eff = self._effective_index(index)
+        self._cache.remove(eff)
+
     def shutdown(self) -> None:
         self._worker.stop()
 
@@ -303,4 +313,5 @@ def collect_image_files(directory: str | Path, recursive: bool = True) -> list[s
             if fp.is_file() and fn not in ignore and not fn.startswith("."):
                 if fp.suffix.lower() in supported:
                     files.append(str(fp))
+    files.sort()
     return files

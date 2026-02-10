@@ -34,6 +34,9 @@ class ThumbnailCache:
         while len(self._cache) > self._max_count:
             self._cache.popitem(last=False)
 
+    def remove(self, index: int) -> None:
+        self._cache.pop(index, None)
+
     def clear(self) -> None:
         self._cache.clear()
 
@@ -119,6 +122,11 @@ class ThumbnailWorker(QObject):
             return cached
         self._thread.enqueue(index, filepath)
         return None
+
+    def invalidate(self, index: int, filepath: str) -> None:
+        """Remove a cached thumbnail and re-request it from disk."""
+        self._cache.remove(index)
+        self._thread.enqueue(index, filepath)
 
     def clear_cache(self) -> None:
         self._cache.clear()

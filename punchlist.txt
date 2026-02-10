@@ -1,0 +1,59 @@
+Photo Manager Outstanding Tasks
+================================
+
+Priority 1: Save with Rotation (Ctrl+Shift+S)
+- Resave the current image file with the current rotation applied to the actual pixel data
+- Update EXIF orientation tag to "normal" after resaving
+- Key binding: Ctrl+Shift+S
+- Ref: overview item 8aj
+
+Priority 2: Tag Copy/Paste (Ctrl+C / Ctrl+V)
+- Ctrl+C: Copy scene, event, and people tags from current image (NOT other tags/categories)
+- Ctrl+V: Paste copied tags to current image (add if not present, don't remove existing)
+- CONFLICT: Ctrl+V is currently mapped to APPLY_TAGS_TO_FOLDER
+- Need user input on how to resolve the Ctrl+V conflict
+- Ref: overview items 8q, 8r
+
+Priority 3: Query/Filter UI
+- Add query/filter bar to organizer UI
+- Core query engine already exists (query/parser.py, query/engine.py)
+- Syntax: tag.person=="Alice" && tag.datetime.year>=2018
+- Operators: ||, &&, !=, >, >=, <, <=, ==
+- Ref: overview item 6
+
+Priority 4: Export UI
+- Export dialog for the organizer
+- Core exporter module already exists (export/exporter.py)
+- Export to directory structure based on tag categories
+- Support copy vs move modes
+- Support ">" operator for expanding tag subcategories into directories
+- Optional image_metadata.csv export
+- Handle multi-tag images (e.g., birthday+vacation -> combined folder)
+- Handle missing tags -> "Other" folder
+- Ref: overview item 7
+
+Priority 5: Pi Integration (Phase 4)
+- systemd service for auto-start slideshow
+- system_control.sh script (-on/-off for systemd entries)
+- USB storage monitor daemon:
+  - Detect USB insertion
+  - Check for "photo_manager" directory structure
+  - Process add/remove/config updates from USB
+  - Sync Pi images back to USB "existing" directory
+  - Splash notifications for each operation
+- Ref: overview items under "Raspberry Pi additional functionality"
+
+Priority 6: Other Tasks (order TBD)
+- "/" key: next image & mark as reviewed (overview 8e)
+- Undo queue: Ctrl+Z with configurable queue size (overview 8s, 10a)
+- F2 conflict: overview says "recursively remove empty dirs" but currently mapped to Edit Tags (overview 8ab)
+- PageUp/Down for dup group nav: plan says PageUp/Down but currently using Alt+Arrow (overview 9b)
+- Dup delete refinements: warn if no keeps marked, prompt for tag transfer (overview 9f)
+- Alt+T: manually edit tag list of an image (overview 8ai) - may overlap with F2 Edit Tags
+- Ctrl+Shift+T: clear an existing tag hotkey (overview 8n second)
+- Config completeness: undo queue size, slideshow transition method (overview 10)
+
+Notes on key binding deviations from overview:
+- Overview says Shift+Arrow for folder nav; implemented as Alt+Arrow (Shift/Ctrl consumed by Qt)
+- Overview says "." for mark delete; implemented as "." (matches)
+- Overview says Ctrl+Alt+D for mark-folder-delete; implemented as Ctrl+Alt+D (matches)

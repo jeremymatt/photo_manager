@@ -1,0 +1,8 @@
+version: 1
+pattern: "{scene}/{filename}.{ext}"
+options:
+  case_insensitive: true
+  require_full_match: true
+  on_mismatch: tag_auto_tag_errors  # other options: skip_file, fail_import, prompt
+tags:
+  scene: "{scene}"

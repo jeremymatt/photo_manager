@@ -80,6 +80,36 @@ class ThumbnailCell(QFrame):
             name = name[:17] + "..."
         self._name_label.setText(name)
 
+    def set_dup_label(self, label: str) -> None:
+        """Set a DUP/KEEP label to overlay on the thumbnail."""
+        self._dup_label = label
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        label = getattr(self, "_dup_label", "")
+        if not label:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        from PyQt6.QtGui import QFont
+        font = QFont("Consolas", 10, QFont.Weight.Bold)
+        painter.setFont(font)
+        if label == "KEEP":
+            painter.setPen(QColor(100, 255, 100))
+        elif label == "DUP":
+            painter.setPen(QColor(255, 100, 100))
+        else:
+            painter.setPen(QColor(200, 200, 200))
+        # Draw in bottom-right of image area
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(font)
+        text_w = fm.horizontalAdvance(label)
+        x = self.width() - text_w - 8
+        y = self._thumb_size + 2
+        painter.drawText(x, y, label)
+        painter.end()
+
     def _update_style(self) -> None:
         if self._selected:
             self.setStyleSheet(
@@ -116,6 +146,12 @@ class _GridContainer(QWidget):
         self._thumb_size = size
 
     def set_cells(self, cells: list[ThumbnailCell]) -> None:
+        # Remove old cells to prevent stale widgets from remaining
+        # visible and clickable with out-of-range indices
+        for old_cell in self._cells:
+            old_cell.hide()
+            old_cell.setParent(None)
+            old_cell.deleteLater()
         self._cells = cells
         for cell in cells:
             cell.setParent(self)
@@ -191,6 +227,9 @@ class GridView(QScrollArea):
         self._selected_indices.clear()
         self._last_clicked = -1
 
+        # Clear thumbnail cache since indices now refer to different images
+        self._thumb_worker.clear_cache()
+
         # Create cells
         self._cells = []
         for i, (fp, fn) in enumerate(zip(file_list, filenames)):
@@ -219,6 +258,11 @@ class GridView(QScrollArea):
 
     def get_selected_indices(self) -> list[int]:
         return sorted(self._selected_indices)
+
+    def set_dup_labels(self, labels: dict[int, str]) -> None:
+        """Set DUP/KEEP labels on grid cells. labels maps index -> label text."""
+        for i, cell in enumerate(self._cells):
+            cell.set_dup_label(labels.get(i, ""))
 
     def _clear_selection(self) -> None:
         for idx in self._selected_indices:
@@ -266,7 +310,9 @@ class GridView(QScrollArea):
     def _request_visible_thumbnails(self) -> None:
         """Request thumbnails for all cells (visible ones first)."""
         for i, filepath in enumerate(self._file_list):
-            self._thumb_worker.request(i, filepath)
+            cached = self._thumb_worker.request(i, filepath)
+            if cached is not None and i < len(self._cells):
+                self._cells[i].set_thumbnail(cached)
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
@@ -276,6 +322,12 @@ class GridView(QScrollArea):
         """Arrow key navigation in grid."""
         if not self._cells:
             super().keyPressEvent(event)
+            return
+
+        # Let modified arrows pass through to the key handler for folder/dup nav
+        if event.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                | Qt.KeyboardModifier.AltModifier):
+            event.ignore()
             return
 
         current = self._last_clicked if self._last_clicked >= 0 else 0

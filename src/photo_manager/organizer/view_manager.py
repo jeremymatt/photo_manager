@@ -124,6 +124,15 @@ class ViewManager(QWidget):
         file_list = self._source.get_file_list()
         filenames = [Path(f).name for f in file_list]
         self._grid.set_images(file_list, filenames)
+        # Also refresh the single view if it's active
+        if self._mode == ViewMode.SINGLE:
+            current = self._single.current_index
+            # Clamp index to new list bounds
+            if file_list:
+                idx = min(current, len(file_list) - 1)
+                self._single.set_images(file_list, start_index=max(0, idx))
+            else:
+                self._single.set_images([], start_index=0)
 
     def _on_single_index_changed(self, index: int) -> None:
         """Keep grid selection in sync when navigating in single view."""

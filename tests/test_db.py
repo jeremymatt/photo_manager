@@ -277,3 +277,46 @@ class TestTagTree:
         portrait = db.resolve_tag_path("person.Alice.portrait")
         assert portrait is not None
         assert not portrait.is_category
+
+
+class TestPartialDatetime:
+    def test_set_full_datetime(self):
+        rec = ImageRecord()
+        rec.set_partial_datetime(2018, 7, 15, 10, 30, 45)
+        assert rec.datetime_str == "2018-07-15T10:30:45"
+        assert rec.year == 2018
+        assert rec.month == 7
+        assert rec.day == 15
+        assert rec.hour == 10
+
+    def test_year_only(self):
+        rec = ImageRecord()
+        rec.set_partial_datetime(year=2020)
+        assert rec.datetime_str == "2020-01-01T00:00:00"
+        assert rec.year == 2020
+        assert rec.month is None
+        assert rec.day is None
+        assert rec.hour is None
+
+    def test_year_month(self):
+        rec = ImageRecord()
+        rec.set_partial_datetime(year=2020, month=6)
+        assert rec.datetime_str == "2020-06-01T00:00:00"
+        assert rec.year == 2020
+        assert rec.month == 6
+        assert rec.day is None
+
+    def test_no_year_clears_all(self):
+        rec = ImageRecord()
+        rec.set_datetime(__import__("datetime").datetime(2020, 1, 1))
+        rec.set_partial_datetime()
+        assert rec.datetime_str is None
+        assert rec.year is None
+        assert rec.month is None
+
+    def test_year_month_day_with_time(self):
+        rec = ImageRecord()
+        rec.set_partial_datetime(year=2021, month=12, day=25, hour=14)
+        assert rec.datetime_str == "2021-12-25T14:00:00"
+        assert rec.hour == 14
+        assert rec.minute is None

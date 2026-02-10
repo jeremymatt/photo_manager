@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from photo_manager.config.config import ConfigManager, DEFAULT_CONFIG
+from photo_manager.config.config import ConfigManager, DEFAULT_CONFIG, get_db_config_path
 
 
 class TestConfigManager:
@@ -63,3 +63,68 @@ class TestConfigManager:
             cm.load()
         with pytest.raises(ValueError):
             cm.save()
+
+
+class TestGetDbConfigPath:
+    def test_basic(self):
+        p = get_db_config_path("/photos/my_photos.db")
+        assert p == Path("/photos/my_photos.config.yaml")
+
+    def test_relative(self):
+        p = get_db_config_path("album.db")
+        assert p.name == "album.config.yaml"
+
+
+class TestLayeredConfig:
+    def test_load_layered_creates_db_config(self, tmp_path):
+        """load_layered creates a config file next to the DB if none exists."""
+        db_config = tmp_path / "photos.config.yaml"
+        assert not db_config.exists()
+
+        cm = ConfigManager()
+        cm.load_layered(db_config_path=db_config)
+        assert db_config.exists()
+        # Config should be defaults
+        assert cm.get("ui.theme") == "dark"
+
+    def test_load_layered_reads_existing_db_config(self, tmp_path):
+        """load_layered picks up settings from existing db config."""
+        db_config = tmp_path / "photos.config.yaml"
+        db_config.write_text("ui:\n  theme: light\n")
+
+        cm = ConfigManager()
+        cm.load_layered(db_config_path=db_config)
+        assert cm.get("ui.theme") == "light"
+        # Other defaults still present
+        assert cm.get("slideshow.duration") == 5.0
+
+    def test_cli_config_overrides_db_config(self, tmp_path):
+        """CLI config takes priority over db config."""
+        db_config = tmp_path / "photos.config.yaml"
+        db_config.write_text("ui:\n  theme: light\n")
+
+        cli_config = tmp_path / "cli.yaml"
+        cli_config.write_text("ui:\n  theme: solarized\n")
+
+        cm = ConfigManager()
+        cm.load_layered(db_config_path=db_config, cli_config_path=cli_config)
+        assert cm.get("ui.theme") == "solarized"
+
+    def test_save_session(self, tmp_path):
+        """save_session persists to the db config file."""
+        db_config = tmp_path / "photos.config.yaml"
+
+        cm = ConfigManager()
+        cm.load_layered(db_config_path=db_config)
+        cm.set("ui.theme", "custom_theme")
+        cm.save_session()
+
+        # Reload and verify
+        cm2 = ConfigManager()
+        cm2.load_layered(db_config_path=db_config)
+        assert cm2.get("ui.theme") == "custom_theme"
+
+    def test_save_session_no_path_is_noop(self):
+        """save_session does nothing if no session path set."""
+        cm = ConfigManager()
+        cm.save_session()  # Should not raise

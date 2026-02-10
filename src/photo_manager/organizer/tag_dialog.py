@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QCompleter,
-    QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -18,9 +15,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from photo_manager.db.manager import DatabaseManager
@@ -28,6 +27,93 @@ from photo_manager.db.models import ImageRecord
 
 
 _MULTIPLE_VALUES = "(multiple values)"
+
+
+class PartialDateTimeWidget(QWidget):
+    """Widget with individual spinboxes for year/month/day/hour/minute/second.
+
+    Each component can be left unset (shown as "--"). Unknown date parts
+    default to 1, unknown time parts default to 0 when constructing a datetime.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        # Year: 0 = unset, 1800-2200 valid range
+        self._year = QSpinBox()
+        self._year.setRange(0, 2200)
+        self._year.setSpecialValueText("----")
+        self._year.setValue(0)
+
+        # Month: 0 = unset, 1-12 valid
+        self._month = QSpinBox()
+        self._month.setRange(0, 12)
+        self._month.setSpecialValueText("--")
+        self._month.setValue(0)
+
+        # Day: 0 = unset, 1-31 valid
+        self._day = QSpinBox()
+        self._day.setRange(0, 31)
+        self._day.setSpecialValueText("--")
+        self._day.setValue(0)
+
+        # Hour: -1 = unset, 0-23 valid
+        self._hour = QSpinBox()
+        self._hour.setRange(-1, 23)
+        self._hour.setSpecialValueText("--")
+        self._hour.setValue(-1)
+
+        # Minute: -1 = unset, 0-59 valid
+        self._minute = QSpinBox()
+        self._minute.setRange(-1, 59)
+        self._minute.setSpecialValueText("--")
+        self._minute.setValue(-1)
+
+        # Second: -1 = unset, 0-59 valid
+        self._second = QSpinBox()
+        self._second.setRange(-1, 59)
+        self._second.setSpecialValueText("--")
+        self._second.setValue(-1)
+
+        for label, spin in [
+            ("Y:", self._year),
+            ("M:", self._month),
+            ("D:", self._day),
+            ("H:", self._hour),
+            ("m:", self._minute),
+            ("s:", self._second),
+        ]:
+            layout.addWidget(QLabel(label))
+            layout.addWidget(spin)
+
+    def set_from_record(self, record: ImageRecord) -> None:
+        """Populate spinboxes from an ImageRecord's datetime fields."""
+        self._year.setValue(record.year if record.year is not None else 0)
+        self._month.setValue(record.month if record.month is not None else 0)
+        self._day.setValue(record.day if record.day is not None else 0)
+        self._hour.setValue(record.hour if record.hour is not None else -1)
+        self._minute.setValue(record.minute if record.minute is not None else -1)
+        self._second.setValue(record.second if record.second is not None else -1)
+
+    def get_values(self) -> dict:
+        """Return dict suitable for ImageRecord.set_partial_datetime()."""
+        year = self._year.value() if self._year.value() > 0 else None
+        month = self._month.value() if self._month.value() > 0 else None
+        day = self._day.value() if self._day.value() > 0 else None
+        hour = self._hour.value() if self._hour.value() >= 0 else None
+        minute = self._minute.value() if self._minute.value() >= 0 else None
+        second = self._second.value() if self._second.value() >= 0 else None
+        return {
+            "year": year, "month": month, "day": day,
+            "hour": hour, "minute": minute, "second": second,
+        }
+
+    def has_value(self) -> bool:
+        """Return True if at least a year is set."""
+        return self._year.value() > 0
 
 
 class TagDialog(QDialog):
@@ -99,18 +185,16 @@ class TagDialog(QDialog):
             grid.addWidget(chk, row, 0, 1, 2)
             row += 1
 
-        # DateTime
+        # DateTime — partial entry with individual spinboxes
         self._chk_apply_datetime = QCheckBox("Apply:")
         self._chk_apply_datetime.setChecked(False)
-        self._dt_edit = QDateTimeEdit()
-        self._dt_edit.setCalendarPopup(True)
-        self._dt_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self._dt_edit.setEnabled(False)
-        self._chk_apply_datetime.toggled.connect(self._dt_edit.setEnabled)
+        self._dt_widget = PartialDateTimeWidget()
+        self._dt_widget.setEnabled(False)
+        self._chk_apply_datetime.toggled.connect(self._dt_widget.setEnabled)
         grid.addWidget(QLabel("Date/Time:"), row, 0)
         dt_layout = QHBoxLayout()
         dt_layout.addWidget(self._chk_apply_datetime)
-        dt_layout.addWidget(self._dt_edit, 1)
+        dt_layout.addWidget(self._dt_widget, 1)
         grid.addLayout(dt_layout, row, 1)
         row += 1
 
@@ -204,14 +288,8 @@ class TagDialog(QDialog):
         self._set_checkbox(self._chk_delete, dels)
         self._set_checkbox(self._chk_reviewed, revs)
 
-        # DateTime — use first record's value for the picker
-        dt_values = [r.datetime_str for r in records]
-        if dt_values[0]:
-            try:
-                dt = datetime.fromisoformat(dt_values[0])
-                self._dt_edit.setDateTime(dt)
-            except (ValueError, TypeError):
-                pass
+        # DateTime — use first record's values for the partial widget
+        self._dt_widget.set_from_record(records[0])
 
         # Location fields
         self._set_text_field(self._txt_city, [r.city for r in records])
@@ -337,8 +415,7 @@ class TagDialog(QDialog):
 
             # DateTime: only if "Apply" is checked
             if self._chk_apply_datetime.isChecked():
-                dt = self._dt_edit.dateTime().toPyDateTime()
-                record.set_datetime(dt)
+                record.set_partial_datetime(**self._dt_widget.get_values())
 
             # Location: only if user edited the field
             if "city" in self._edited_fields:
