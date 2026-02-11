@@ -1,25 +1,18 @@
 Photo Manager Outstanding Tasks
 ================================
 
-Priority 1: Save with Rotation (Ctrl+Shift+S)
-- Resave the current image file with the current rotation applied to the actual pixel data
-- Update EXIF orientation tag to "normal" after resaving
-- Key binding: Ctrl+Shift+S
-- Ref: overview item 8aj
+Priority 1: Save with Rotation (Ctrl+Shift+S) -- DONE
+Priority 2: Tag Copy/Paste (Ctrl+C / Ctrl+V / Ctrl+Shift+V) -- DONE
 
-Priority 2: Tag Copy/Paste (Ctrl+C / Ctrl+V)
-- Ctrl+C: Copy scene, event, and people tags from current image (NOT other tags/categories)
-- Ctrl+V: Paste copied tags to current image (add if not present, don't remove existing)
-- CONFLICT: Ctrl+V is currently mapped to APPLY_TAGS_TO_FOLDER
-- Need user input on how to resolve the Ctrl+V conflict
-- Ref: overview items 8q, 8r
+Priority 3: Query/Filter UI -- DONE
 
-Priority 3: Query/Filter UI
-- Add query/filter bar to organizer UI
-- Core query engine already exists (query/parser.py, query/engine.py)
-- Syntax: tag.person=="Alice" && tag.datetime.year>=2018
-- Operators: ||, &&, !=, >, >=, <, <=, ==
-- Ref: overview item 6
+Priority 3a: Enforce lowercase tags -- DONE
+
+Priority 3b: Tag model simplification + negation syntax -- DONE
+
+Priority 3c: Search for None/missing values -- DONE (folded into 3b)
+
+Priority 3d: Tag picker in filter dialog -- DONE
 
 Priority 4: Export UI
 - Export dialog for the organizer
@@ -52,6 +45,9 @@ Priority 6: Other Tasks (order TBD)
 - Alt+T: manually edit tag list of an image (overview 8ai) - may overlap with F2 Edit Tags
 - Ctrl+Shift+T: clear an existing tag hotkey (overview 8n second)
 - Config completeness: undo queue size, slideshow transition method (overview 10)
+
+General Instructions:
+- After completing each task, update README.md to reflect the new changes (keyboard shortcuts, CLI options, features, etc.)
 
 Notes on key binding deviations from overview:
 - Overview says Shift+Arrow for folder nav; implemented as Alt+Arrow (Shift/Ctrl consumed by Qt)

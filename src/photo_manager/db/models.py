@@ -102,12 +102,11 @@ class TagDefinition:
 
 @dataclass
 class ImageTag:
-    """Association between an image and a tag with a value."""
+    """Association between an image and a tag (presence-based)."""
 
     id: int | None = None
     image_id: int = 0
     tag_id: int = 0
-    value: str | None = None
 
 
 @dataclass

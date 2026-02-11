@@ -44,11 +44,14 @@ class OrganizerAction(Enum):
     TOGGLE_VIEW = auto()
     IMPORT_DIRECTORY = auto()
     CHECK_ADD_DIRECTORY = auto()
+    QUERY_FILTER = auto()
 
     # Tag management
     EDIT_TAGS = auto()
     EDIT_KEYBINDINGS = auto()
     QUICK_BINDING = auto()
+    COPY_TAGS = auto()
+    PASTE_TAGS = auto()
     APPLY_TAGS_TO_FOLDER = auto()
     SHOW_TAG_HOTKEYS = auto()
 
@@ -95,6 +98,7 @@ _SINGLE_KEY_MAP: dict[tuple[int, frozenset], OrganizerAction] = {
     (Qt.Key.Key_F1, frozenset()): OrganizerAction.CHECK_ADD_DIRECTORY,
     (Qt.Key.Key_F2, frozenset()): OrganizerAction.EDIT_TAGS,
     (Qt.Key.Key_F4, frozenset()): OrganizerAction.IMPORT_DIRECTORY,
+    (Qt.Key.Key_F5, frozenset()): OrganizerAction.QUERY_FILTER,
     (Qt.Key.Key_F9, frozenset()): OrganizerAction.CYCLE_INFO_LEVEL,
     (Qt.Key.Key_F10, frozenset()): OrganizerAction.GOTO_IMAGE,
     (Qt.Key.Key_F11, frozenset()): OrganizerAction.TOGGLE_FULLSCREEN,
@@ -103,7 +107,9 @@ _SINGLE_KEY_MAP: dict[tuple[int, frozenset], OrganizerAction] = {
     (Qt.Key.Key_Space, frozenset()): OrganizerAction.TOGGLE_SLIDESHOW_PAUSE,
     (Qt.Key.Key_Period, frozenset()): OrganizerAction.MARK_DELETE,
     (Qt.Key.Key_Period, frozenset({Qt.KeyboardModifier.AltModifier})): OrganizerAction.UNMARK_DELETE,
-    (Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.APPLY_TAGS_TO_FOLDER,
+    (Qt.Key.Key_C, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.COPY_TAGS,
+    (Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.PASTE_TAGS,
+    (Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.ShiftModifier})): OrganizerAction.APPLY_TAGS_TO_FOLDER,
     (Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.AltModifier})): OrganizerAction.MARK_DELETE_FOLDER,
     (Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.AltModifier})): OrganizerAction.REVIEW_DELETIONS,
     (Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.EXECUTE_DELETIONS,
@@ -123,8 +129,12 @@ _GRID_KEY_MAP: dict[tuple[int, frozenset], OrganizerAction] = {
     (Qt.Key.Key_F1, frozenset()): OrganizerAction.CHECK_ADD_DIRECTORY,
     (Qt.Key.Key_F2, frozenset()): OrganizerAction.EDIT_TAGS,
     (Qt.Key.Key_F4, frozenset()): OrganizerAction.IMPORT_DIRECTORY,
+    (Qt.Key.Key_F5, frozenset()): OrganizerAction.QUERY_FILTER,
     (Qt.Key.Key_F11, frozenset()): OrganizerAction.TOGGLE_FULLSCREEN,
     (Qt.Key.Key_M, frozenset({Qt.KeyboardModifier.AltModifier})): OrganizerAction.TOGGLE_HELP,
+    (Qt.Key.Key_C, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.COPY_TAGS,
+    (Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.PASTE_TAGS,
+    (Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.ShiftModifier})): OrganizerAction.APPLY_TAGS_TO_FOLDER,
     (Qt.Key.Key_Period, frozenset()): OrganizerAction.MARK_DELETE,
     (Qt.Key.Key_Period, frozenset({Qt.KeyboardModifier.AltModifier})): OrganizerAction.UNMARK_DELETE,
     (Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.AltModifier})): OrganizerAction.REVIEW_DELETIONS,

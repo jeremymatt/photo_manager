@@ -32,6 +32,7 @@ from photo_manager.organizer.progress_dialog import ProgressDialog
 from photo_manager.organizer.tag_dialog import TagDialog
 from photo_manager.organizer.view_manager import ViewManager, ViewMode
 from photo_manager.viewer.help_overlay import HelpOverlay
+from photo_manager.viewer.query_dialog import QueryDialog
 
 ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Views", [
@@ -62,7 +63,9 @@ ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("F2", "Edit tags dialog"),
         ("Ctrl+T", "Edit keybindings"),
         ("Alt+Shift+T", "Show tag hotkeys"),
-        ("Ctrl+V", "Apply tags to folder"),
+        ("Ctrl+C", "Copy scene/event/person tags"),
+        ("Ctrl+V", "Paste copied tags to image"),
+        ("Ctrl+Shift+V", "Apply copied tags to folder/dup group"),
         ("F", "Set favorite (default)"),
         ("D", "Set to-delete (default)"),
         ("R", "Set reviewed (default)"),
@@ -84,6 +87,7 @@ ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Database", [
         ("F4", "Import directory"),
+        ("F5", "Query / filter images"),
         ("F1", "Check / add directory"),
     ]),
     ("Other", [
@@ -145,6 +149,12 @@ class OrganizerWindow(QMainWindow):
 
         # Background hash thread reference
         self._hash_thread: HashThread | None = None
+
+        # Copied tags clipboard (list of ImageTag)
+        self._copied_tags: list = []
+
+        # Saved query for restoring after dup review
+        self._saved_query: str | None = None
 
         # Help overlay
         self._help = HelpOverlay(
@@ -289,6 +299,10 @@ class OrganizerWindow(QMainWindow):
         elif action == OrganizerAction.QUICK_BINDING:
             actions = self._key_handler.get_last_binding_actions()
             self._execute_binding(actions)
+        elif action == OrganizerAction.COPY_TAGS:
+            self._copy_tags()
+        elif action == OrganizerAction.PASTE_TAGS:
+            self._paste_tags()
         elif action == OrganizerAction.APPLY_TAGS_TO_FOLDER:
             self._apply_tags_to_folder()
         elif action == OrganizerAction.MARK_DELETE:
@@ -312,6 +326,8 @@ class OrganizerWindow(QMainWindow):
                 self._execute_deletions()
         elif action == OrganizerAction.SHOW_TAG_HOTKEYS:
             self._show_tag_hotkeys()
+        elif action == OrganizerAction.QUERY_FILTER:
+            self._show_query_dialog()
         elif action == OrganizerAction.DETECT_DUPLICATES:
             self._detect_duplicates()
         elif action == OrganizerAction.ENTER_DUP_REVIEW:
@@ -465,7 +481,7 @@ class OrganizerWindow(QMainWindow):
 
             # Dynamic tag add/remove
             elif action_str.startswith("tag:"):
-                tag_path = action_str[4:]
+                tag_path = action_str[4:].lower()
                 if not records:
                     continue
                 tag_def = self._db.ensure_tag_path(tag_path)
@@ -475,7 +491,7 @@ class OrganizerWindow(QMainWindow):
                     self._db.set_image_tag(record.id, tag_def.id)
 
             elif action_str.startswith("untag:"):
-                tag_path = action_str[6:]
+                tag_path = action_str[6:].lower()
                 if not records:
                     continue
                 tag_def = self._db.ensure_tag_path(tag_path)
@@ -514,10 +530,7 @@ class OrganizerWindow(QMainWindow):
         tag_strings = []
         for it in image_tags:
             path = self._db.get_tag_path(it.tag_id)
-            if it.value:
-                tag_strings.append(f"{path} = {it.value}")
-            else:
-                tag_strings.append(path)
+            tag_strings.append(path)
         # Also show fixed-field flags
         flags = []
         if record.favorite:
@@ -540,8 +553,10 @@ class OrganizerWindow(QMainWindow):
                     tag_strings.append("status: DUP")
         single.info_overlay.set_tags(tag_strings)
 
-    def _apply_tags_to_folder(self) -> None:
-        """Apply current image's dynamic tags to all other images in the folder."""
+    _COPY_TAG_ROOTS = {"scene", "event", "person"}
+
+    def _copy_tags(self) -> None:
+        """Copy scene, event, and person tags from the current image (Ctrl+C)."""
         records = self._get_selected_records()
         if not records:
             return
@@ -549,28 +564,112 @@ class OrganizerWindow(QMainWindow):
         if record.id is None:
             return
 
-        # Get this image's dynamic tags
         image_tags = self._db.get_image_tags(record.id)
-        if not image_tags:
-            self._status_bar.showMessage("No tags to apply")
+        # Filter to tags whose root category is scene, event, or person
+        filtered = []
+        for it in image_tags:
+            path = self._db.get_tag_path(it.tag_id)
+            root = path.split(".")[0]
+            if root in self._COPY_TAG_ROOTS:
+                filtered.append(it)
+
+        self._copied_tags = filtered
+        tag_names = [self._db.get_tag_path(t.tag_id) for t in filtered]
+        self._status_bar.showMessage(
+            f"Copied {len(filtered)} tag(s): {', '.join(tag_names)}"
+            if filtered else "No scene/event/person tags to copy"
+        )
+
+    def _apply_tags_to_image(self, image_id: int) -> int:
+        """Apply copied tags to an image, skipping those already present.
+
+        Returns the number of new tags actually added.
+        """
+        existing = self._db.get_image_tags(image_id)
+        existing_keys = {t.tag_id for t in existing}
+        added = 0
+        for tag in self._copied_tags:
+            if tag.tag_id not in existing_keys:
+                self._db.set_image_tag(image_id, tag.tag_id)
+                added += 1
+        return added
+
+    def _paste_tags(self) -> None:
+        """Paste copied tags onto the current image (Ctrl+V)."""
+        if not self._copied_tags:
+            self._status_bar.showMessage("No copied tags to paste")
             return
 
-        # Find all records in the same folder
-        folder = Path(record.filepath).parent
-        count = 0
-        for i in range(self._source.total):
-            sibling = self._source.get_record(i)
-            if sibling is None or sibling.id is None or sibling.id == record.id:
-                continue
-            if Path(sibling.filepath).parent != folder:
-                continue
-            for tag in image_tags:
-                self._db.set_image_tag(sibling.id, tag.tag_id, tag.value)
-            count += 1
+        records = self._get_selected_records()
+        if not records:
+            return
 
-        self._status_bar.showMessage(
-            f"Applied {len(image_tags)} tag(s) to {count} image(s) in folder"
-        )
+        img_count = 0
+        tag_count = 0
+        for record in records:
+            if record.id is None:
+                continue
+            added = self._apply_tags_to_image(record.id)
+            if added:
+                tag_count += added
+                img_count += 1
+
+        self._update_overlay_tags()
+        if tag_count:
+            self._status_bar.showMessage(
+                f"Pasted {tag_count} new tag(s) to {img_count} image(s)"
+            )
+        else:
+            self._status_bar.showMessage("All tags already present")
+
+    def _apply_tags_to_folder(self) -> None:
+        """Apply copied tags to all images in the current folder or dup group (Ctrl+Shift+V)."""
+        if not self._copied_tags:
+            self._status_bar.showMessage("No copied tags to apply (use Ctrl+C first)")
+            return
+
+        records = self._get_selected_records()
+        if not records:
+            return
+        record = records[0]
+        if record.id is None:
+            return
+
+        img_count = 0
+        tag_count = 0
+        if self._source.is_dup_filtered:
+            # Apply to all images in the current duplicate group
+            for i in range(self._source.total):
+                sibling = self._source.get_record(i)
+                if sibling is None or sibling.id is None:
+                    continue
+                added = self._apply_tags_to_image(sibling.id)
+                if added:
+                    tag_count += added
+                    img_count += 1
+            label = "duplicate group"
+        else:
+            # Apply to all images in the same folder
+            folder = Path(record.filepath).parent
+            for i in range(self._source.total):
+                sibling = self._source.get_record(i)
+                if sibling is None or sibling.id is None:
+                    continue
+                if Path(sibling.filepath).parent != folder:
+                    continue
+                added = self._apply_tags_to_image(sibling.id)
+                if added:
+                    tag_count += added
+                    img_count += 1
+            label = "folder"
+
+        self._update_overlay_tags()
+        if tag_count:
+            self._status_bar.showMessage(
+                f"Applied {tag_count} new tag(s) to {img_count} image(s) in {label}"
+            )
+        else:
+            self._status_bar.showMessage(f"All tags already present in {label}")
 
     def _mark_delete(self) -> None:
         """Mark selected images for deletion and advance."""
@@ -787,6 +886,28 @@ class OrganizerWindow(QMainWindow):
         else:
             self._update_status()
 
+    # --- Query filter ---
+
+    def _show_query_dialog(self) -> None:
+        """Open the query/filter dialog (F5)."""
+        dialog = QueryDialog(
+            self._db,
+            initial_query=self._source.query_expression,
+            parent=self,
+        )
+        if dialog.exec() == QueryDialog.DialogCode.Accepted:
+            query = dialog.result_query
+            if query is not None:
+                self._source.apply_query(query)
+                total = self._source.total
+                self._status_bar.showMessage(
+                    f"Filter active: {total} image(s) match"
+                )
+            else:
+                self._source.clear_query()
+                self._status_bar.showMessage("Filter cleared")
+            self._update_status()
+
     # --- Duplicate management ---
 
     def _detect_duplicates(self) -> None:
@@ -806,9 +927,17 @@ class OrganizerWindow(QMainWindow):
 
     def _enter_dup_review(self) -> None:
         """Enter duplicate review mode, loading groups from DB."""
+        # Save and clear any active query filter so dup mode sees all images
+        self._saved_query = self._source.query_expression
+        if self._saved_query:
+            self._source.clear_query()
         self._source.set_dup_filter(True)
         if self._source.dup_group_count == 0:
             self._source.set_dup_filter(False)
+            # Restore query if we cleared it
+            if self._saved_query:
+                self._source.apply_query(self._saved_query)
+                self._saved_query = None
             self._status_bar.showMessage(
                 "No duplicate groups found. Use Ctrl+Shift+D to detect."
             )
@@ -820,6 +949,10 @@ class OrganizerWindow(QMainWindow):
         """Exit duplicate review mode."""
         self._source.set_dup_filter(False)
         self._view_manager.grid_view.set_dup_labels({})
+        # Restore saved query filter
+        if self._saved_query:
+            self._source.apply_query(self._saved_query)
+            self._saved_query = None
         self._status_bar.showMessage("Exited duplicate review")
 
     def _next_dup_group(self) -> None:
@@ -936,16 +1069,16 @@ class OrganizerWindow(QMainWindow):
 
         # Transfer tags from deleted images to kept image
         kept_tags = {
-            (t.tag_id, t.value)
+            t.tag_id
             for t in self._db.get_image_tags(kept_member.image_id)
         }
         for m in to_delete_members:
             for tag in self._db.get_image_tags(m.image_id):
-                if (tag.tag_id, tag.value) not in kept_tags:
+                if tag.tag_id not in kept_tags:
                     self._db.set_image_tag(
-                        kept_member.image_id, tag.tag_id, tag.value
+                        kept_member.image_id, tag.tag_id
                     )
-                    kept_tags.add((tag.tag_id, tag.value))
+                    kept_tags.add(tag.tag_id)
 
         # Delete the files and DB records
         db_dir = self._source._db_dir
@@ -1028,8 +1161,9 @@ class OrganizerWindow(QMainWindow):
         )
         mode = self._view_manager.mode.capitalize()
         total = self._source.total
+        query_status = "  |  FILTERED" if self._source.query_expression else ""
         self._status_bar.showMessage(
-            f"DB: {db_name}  |  {total} images  |  {mode} view"
+            f"DB: {db_name}  |  {total} images  |  {mode} view{query_status}"
         )
 
     def _save_with_rotation(self) -> None:

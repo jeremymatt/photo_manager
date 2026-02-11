@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS images (
@@ -57,8 +57,7 @@ CREATE TABLE IF NOT EXISTS image_tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
     tag_id INTEGER NOT NULL REFERENCES tag_definitions(id),
-    value TEXT,
-    UNIQUE(image_id, tag_id, value)
+    UNIQUE(image_id, tag_id)
 );
 
 CREATE TABLE IF NOT EXISTS duplicate_groups (
@@ -126,16 +125,16 @@ DEFAULT_TAG_TREE: list[tuple[str, str | None, str, bool]] = [
     ("event", None, "string", True),
     ("christmas", "event", "string", False),
     ("birthday", "event", "string", True),
-    ("Alice", "birthday", "string", False),
-    ("Bob", "birthday", "string", False),
+    ("alice", "birthday", "string", False),
+    ("bob", "birthday", "string", False),
     ("vacation", "event", "string", True),
-    ("Lake", "vacation", "string", False),
-    ("City", "vacation", "string", False),
+    ("lake", "vacation", "string", False),
+    ("city", "vacation", "string", False),
 
     # Person
     ("person", None, "string", True),
-    ("Alice", "person", "string", False),
-    ("Bob", "person", "string", False),
+    ("alice", "person", "string", False),
+    ("bob", "person", "string", False),
 
     # Datetime
     ("datetime", None, "datetime", True),

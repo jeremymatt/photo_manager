@@ -219,17 +219,16 @@ class ExportEngine:
             # Get all child tags for this image under this category
             return self._get_expanded_tag_value(image.id, tag_def.id)
         else:
-            # Get direct tag value
+            # Check if this exact tag is present
             tags = self._db.get_image_tags(image.id)
-            for tag in tags:
-                if tag.tag_id == tag_def.id and tag.value:
-                    return tag.value
-            # Check children for value
+            tag_ids = {t.tag_id for t in tags}
+            if tag_def.id in tag_ids:
+                return tag_def.name
+            # Check children — return first matching child's name
             children = self._db.get_tag_children(tag_def.id)
             for child in children:
-                for tag in tags:
-                    if tag.tag_id == child.id and tag.value:
-                        return tag.value
+                if child.id in tag_ids:
+                    return child.name
             return None
 
     def _get_expanded_tag_value(
@@ -248,19 +247,11 @@ class ExportEngine:
             children = self._db.get_tag_children(parent_id)
             for child in children:
                 if child.id in tag_ids:
-                    # This child is tagged - check for deeper nesting
+                    # This child is tagged — check for deeper nesting
                     deeper = find_path(child.id)
                     if deeper:
                         return [child.name] + deeper
-                    # Check if there's a value
-                    for tag in tags:
-                        if tag.tag_id == child.id and tag.value:
-                            return [tag.value]
                     return [child.name]
-            # Check for direct value on parent
-            for tag in tags:
-                if tag.tag_id == parent_id and tag.value:
-                    return [tag.value]
             return []
 
         path_parts = find_path(tag_def_id)
@@ -304,13 +295,12 @@ class ExportEngine:
             "favorite": image.favorite,
             "reviewed": image.reviewed,
         }
-        # Add tag values
+        # Add tag paths
         if image.id is not None:
             tags = self._db.get_image_tags(image.id)
             for tag in tags:
-                tag_def = self._db.get_tag_definition(tag.tag_id)
-                if tag_def:
-                    row[f"tag_{tag_def.name}"] = tag.value
+                path = self._db.get_tag_path(tag.tag_id)
+                row[f"tag_{path}"] = True
         return row
 
     def _write_csv(self, path: Path, rows: list[dict]) -> None:

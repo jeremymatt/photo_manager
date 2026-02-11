@@ -1,18 +1,25 @@
 """Query expression parser for tag-based image filtering.
 
 Parses expressions like:
-    (tag.person=="Alice" && tag.event=="birthday" && tag.datetime.year>=2018)
-    (tag.scene=="indoor" || tag.scene.outdoor=="lake")
-    (tag.favorite==true)
+    tag.person.alice && tag.datetime.year>=2018
+    tag.scene.indoor || tag.scene.outdoor
+    tag.favorite
+    !tag.scene.indoor
+    !(tag.person.alice && tag.outdoor.hike)
+    tag.outdoor.hike*          (hike + all descendants)
+    tag.outdoor.hike.*         (descendants only, not hike itself)
+    tag.datetime.year==None    (missing value)
 
 Grammar:
     expression  = or_expr
     or_expr     = and_expr ('||' and_expr)*
-    and_expr    = comparison ('&&' comparison)*
-    comparison  = '(' expression ')'
-                | tag_ref OPERATOR value
+    and_expr    = unary ('&&' unary)*
+    unary       = '!' unary | atom
+    atom        = '(' expression ')'
+                | tag_ref OPERATOR value    (comparison for fixed fields)
+                | tag_ref                   (presence check for dynamic tags)
     tag_ref     = 'tag.' dotted_name
-    value       = QUOTED_STRING | NUMBER | BOOLEAN
+    value       = QUOTED_STRING | NUMBER | BOOLEAN | NONE
     OPERATOR    = '==' | '!=' | '>' | '>=' | '<' | '<='
 """
 
@@ -28,6 +35,7 @@ class TokenType(Enum):
     STRING = auto()        # "Alice", 'Alice'
     NUMBER = auto()        # 2018, 3.14
     BOOLEAN = auto()       # true, false
+    NONE = auto()          # None
     OP_EQ = auto()         # ==
     OP_NEQ = auto()        # !=
     OP_GT = auto()         # >
@@ -36,6 +44,8 @@ class TokenType(Enum):
     OP_LTE = auto()        # <=
     OP_AND = auto()        # &&
     OP_OR = auto()         # ||
+    OP_NOT = auto()        # !
+    WILDCARD = auto()      # *
     LPAREN = auto()        # (
     RPAREN = auto()        # )
     EOF = auto()
@@ -70,6 +80,9 @@ class Tokenizer:
             elif ch == ")":
                 tokens.append(Token(TokenType.RPAREN, ")", self._pos))
                 self._pos += 1
+            elif ch == "*":
+                tokens.append(Token(TokenType.WILDCARD, "*", self._pos))
+                self._pos += 1
             elif ch == "&" and self._peek(1) == "&":
                 tokens.append(Token(TokenType.OP_AND, "&&", self._pos))
                 self._pos += 2
@@ -82,6 +95,9 @@ class Tokenizer:
             elif ch == "!" and self._peek(1) == "=":
                 tokens.append(Token(TokenType.OP_NEQ, "!=", self._pos))
                 self._pos += 2
+            elif ch == "!":
+                tokens.append(Token(TokenType.OP_NOT, "!", self._pos))
+                self._pos += 1
             elif ch == ">" and self._peek(1) == "=":
                 tokens.append(Token(TokenType.OP_GTE, ">=", self._pos))
                 self._pos += 2
@@ -104,6 +120,9 @@ class Tokenizer:
             elif ch == "f" and self._text[self._pos:self._pos + 5] == "false":
                 tokens.append(Token(TokenType.BOOLEAN, False, self._pos))
                 self._pos += 5
+            elif ch == "N" and self._text[self._pos:self._pos + 4] == "None":
+                tokens.append(Token(TokenType.NONE, None, self._pos))
+                self._pos += 4
             elif ch.isdigit() or (ch == "-" and self._pos + 1 < len(self._text) and self._text[self._pos + 1].isdigit()):
                 tokens.append(self._read_number())
             else:
@@ -144,7 +163,9 @@ class Tokenizer:
         ):
             chars.append(self._text[self._pos])
             self._pos += 1
-        return Token(TokenType.TAG_REF, "".join(chars), start)
+        # Keep trailing dot in value (signals children-only wildcard when
+        # followed by '>').  The parser handles stripping it.
+        return Token(TokenType.TAG_REF, "".join(chars).lower(), start)
 
     def _read_number(self) -> Token:
         start = self._pos
@@ -171,10 +192,10 @@ class Tokenizer:
 
 @dataclass
 class ComparisonNode:
-    """A comparison like tag.person == "Alice"."""
-    tag_path: str       # e.g. "person", "datetime.year", "scene.outdoor"
+    """A comparison like tag.datetime.year >= 2018."""
+    tag_path: str       # e.g. "datetime.year", "favorite"
     operator: str       # ==, !=, >, >=, <, <=
-    value: Any          # string, number, or boolean
+    value: Any          # string, number, boolean, or None
 
 
 @dataclass
@@ -185,12 +206,34 @@ class LogicalNode:
     right: ASTNode
 
 
-ASTNode = ComparisonNode | LogicalNode
+@dataclass
+class PresenceNode:
+    """Check if a tag exists on an image (presence-based)."""
+    tag_path: str                 # e.g. "person.alice", "favorite"
+    wildcard: str | None = None   # None, "inclusive" (*), "children_only" (.*)
+
+
+@dataclass
+class NegationNode:
+    """Negate an expression."""
+    child: ASTNode
+
+
+ASTNode = ComparisonNode | LogicalNode | PresenceNode | NegationNode
 
 
 class QueryParseError(Exception):
     """Error raised when parsing a query expression fails."""
     pass
+
+
+_VALUE_TOKENS = {TokenType.STRING, TokenType.NUMBER, TokenType.BOOLEAN, TokenType.NONE}
+
+_COMPARISON_OPS = {
+    TokenType.OP_EQ, TokenType.OP_NEQ,
+    TokenType.OP_GT, TokenType.OP_GTE,
+    TokenType.OP_LT, TokenType.OP_LTE,
+}
 
 
 class Parser:
@@ -218,14 +261,21 @@ class Parser:
         return left
 
     def _parse_and(self) -> ASTNode:
-        left = self._parse_primary()
+        left = self._parse_unary()
         while self._current().type == TokenType.OP_AND:
             self._advance()
-            right = self._parse_primary()
+            right = self._parse_unary()
             left = LogicalNode(operator="&&", left=left, right=right)
         return left
 
-    def _parse_primary(self) -> ASTNode:
+    def _parse_unary(self) -> ASTNode:
+        if self._current().type == TokenType.OP_NOT:
+            self._advance()  # skip !
+            child = self._parse_unary()  # recursive for !!x
+            return NegationNode(child=child)
+        return self._parse_atom()
+
+    def _parse_atom(self) -> ASTNode:
         token = self._current()
 
         if token.type == TokenType.LPAREN:
@@ -239,42 +289,58 @@ class Parser:
             return node
 
         if token.type == TokenType.TAG_REF:
-            return self._parse_comparison()
+            return self._parse_tag_expression()
 
         raise QueryParseError(
             f"Unexpected token '{token.value}' at position {token.pos}"
         )
 
-    def _parse_comparison(self) -> ComparisonNode:
-        tag_token = self._current()
-        if tag_token.type != TokenType.TAG_REF:
-            raise QueryParseError(
-                f"Expected tag reference at position {tag_token.pos}"
-            )
-        self._advance()
+    def _parse_tag_expression(self) -> ASTNode:
+        """Parse a tag reference followed by optional operator+value or wildcard."""
+        tag_token = self._advance()
+        tag_path = tag_token.value  # already lowercased
+        next_token = self._current()
 
-        op_token = self._current()
-        if op_token.type not in (
-            TokenType.OP_EQ, TokenType.OP_NEQ,
-            TokenType.OP_GT, TokenType.OP_GTE,
-            TokenType.OP_LT, TokenType.OP_LTE,
-        ):
+        # Check for comparison operators
+        if next_token.type in _COMPARISON_OPS:
+            return self._parse_comparison_tail(tag_path)
+
+        # Handle * wildcard: tag.hike* (inclusive) or tag.hike.* (children_only)
+        if next_token.type == TokenType.WILDCARD:
+            self._advance()  # consume *
+            # Check for children-only (.*) vs inclusive (*)
+            if tag_path.endswith("."):
+                return PresenceNode(
+                    tag_path=tag_path.rstrip("."),
+                    wildcard="children_only",
+                )
+            return PresenceNode(tag_path=tag_path, wildcard="inclusive")
+
+        # No operator — bare presence check
+        # Strip any trailing dot (shouldn't normally occur without >)
+        clean_path = tag_path.rstrip(".")
+        return PresenceNode(tag_path=clean_path)
+
+    def _parse_comparison_tail(self, tag_path: str) -> ComparisonNode:
+        """Parse operator + value after a tag reference."""
+        # Strip trailing dot from tag path (if any)
+        tag_path = tag_path.rstrip(".")
+
+        op_token = self._advance()
+        if op_token.type not in _COMPARISON_OPS:
             raise QueryParseError(
                 f"Expected comparison operator at position {op_token.pos}"
             )
-        self._advance()
 
         val_token = self._current()
-        if val_token.type not in (
-            TokenType.STRING, TokenType.NUMBER, TokenType.BOOLEAN
-        ):
+        if val_token.type not in _VALUE_TOKENS:
             raise QueryParseError(
                 f"Expected value at position {val_token.pos}"
             )
         self._advance()
 
         return ComparisonNode(
-            tag_path=tag_token.value,
+            tag_path=tag_path,
             operator=op_token.value,
             value=val_token.value,
         )
@@ -287,12 +353,20 @@ class Parser:
         self._pos += 1
         return token
 
+    def _peek_token(self, offset: int) -> Token:
+        idx = self._pos + offset
+        if idx < len(self._tokens):
+            return self._tokens[idx]
+        return self._tokens[-1]  # EOF
+
 
 def parse_query(expression: str) -> ASTNode:
     """Parse a query expression string into an AST.
 
-    Example:
-        ast = parse_query('tag.person=="Alice" && tag.datetime.year>=2018')
+    Examples:
+        ast = parse_query('tag.person.alice && tag.datetime.year>=2018')
+        ast = parse_query('!tag.scene.indoor')
+        ast = parse_query('tag.outdoor.hike*')
     """
     tokenizer = Tokenizer(expression)
     tokens = tokenizer.tokenize()

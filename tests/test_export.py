@@ -76,11 +76,12 @@ class TestExportEngine:
             year=2019, file_size=1500,
         ))
 
-        # Tag images
-        event_tag = db.resolve_tag_path("event")
-        db.set_image_tag(id1, event_tag.id, "birthday")
-        db.set_image_tag(id2, event_tag.id, "vacation")
-        db.set_image_tag(id3, event_tag.id, "birthday")
+        # Tag images (presence-based)
+        bday_tag = db.ensure_tag_path("event.birthday")
+        vacation_tag = db.ensure_tag_path("event.vacation")
+        db.set_image_tag(id1, bday_tag.id)
+        db.set_image_tag(id2, vacation_tag.id)
+        db.set_image_tag(id3, bday_tag.id)
 
         images = db.get_all_images()
         yield db, images, tmp_path

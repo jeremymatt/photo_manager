@@ -204,7 +204,7 @@ class DatabaseManager:
         cursor = self._conn.execute(
             """INSERT INTO tag_definitions (name, parent_id, data_type, is_category)
             VALUES (?, ?, ?, ?)""",
-            (tag_def.name, tag_def.parent_id, tag_def.data_type,
+            (tag_def.name.lower(), tag_def.parent_id, tag_def.data_type,
              int(tag_def.is_category)),
         )
         self._conn.commit()
@@ -223,15 +223,16 @@ class DatabaseManager:
     ) -> TagDefinition | None:
         """Get a tag definition by name and optional parent."""
         self._ensure_open()
+        name_lower = name.lower()
         if parent_id is None:
             row = self._conn.execute(
                 "SELECT * FROM tag_definitions WHERE name = ? AND parent_id IS NULL",
-                (name,),
+                (name_lower,),
             ).fetchone()
         else:
             row = self._conn.execute(
                 "SELECT * FROM tag_definitions WHERE name = ? AND parent_id = ?",
-                (name, parent_id),
+                (name_lower, parent_id),
             ).fetchone()
         return self._row_to_tag_def(row) if row else None
 
@@ -280,8 +281,8 @@ class DatabaseManager:
         return build_subtree(None)
 
     def resolve_tag_path(self, dotted_path: str) -> TagDefinition | None:
-        """Resolve a dotted tag path like 'event.birthday.Alice' to a TagDefinition."""
-        parts = dotted_path.split(".")
+        """Resolve a dotted tag path like 'event.birthday.alice' to a TagDefinition."""
+        parts = [p.lower() for p in dotted_path.split(".")]
         parent_id = None
         tag_def = None
         for part in parts:
@@ -315,7 +316,7 @@ class DatabaseManager:
         If an existing leaf node gains a child, it is promoted to a category.
         Returns the leaf TagDefinition.
         """
-        parts = dotted_path.split(".")
+        parts = [p.lower() for p in dotted_path.split(".")]
         parent_id: int | None = None
         tag_def: TagDefinition | None = None
 
@@ -349,34 +350,24 @@ class DatabaseManager:
 
     # --- Image Tag CRUD ---
 
-    def set_image_tag(
-        self, image_id: int, tag_id: int, value: str | None = None
-    ) -> int:
-        """Set a tag on an image. Returns the image_tag ID."""
+    def set_image_tag(self, image_id: int, tag_id: int) -> int:
+        """Set a tag on an image (presence-based). Returns the image_tag ID."""
         self._ensure_open()
         cursor = self._conn.execute(
-            """INSERT OR IGNORE INTO image_tags (image_id, tag_id, value)
-            VALUES (?, ?, ?)""",
-            (image_id, tag_id, value),
+            """INSERT OR IGNORE INTO image_tags (image_id, tag_id)
+            VALUES (?, ?)""",
+            (image_id, tag_id),
         )
         self._conn.commit()
         return cursor.lastrowid
 
-    def remove_image_tag(
-        self, image_id: int, tag_id: int, value: str | None = None
-    ) -> None:
+    def remove_image_tag(self, image_id: int, tag_id: int) -> None:
         """Remove a tag from an image."""
         self._ensure_open()
-        if value is None:
-            self._conn.execute(
-                "DELETE FROM image_tags WHERE image_id = ? AND tag_id = ?",
-                (image_id, tag_id),
-            )
-        else:
-            self._conn.execute(
-                "DELETE FROM image_tags WHERE image_id = ? AND tag_id = ? AND value = ?",
-                (image_id, tag_id, value),
-            )
+        self._conn.execute(
+            "DELETE FROM image_tags WHERE image_id = ? AND tag_id = ?",
+            (image_id, tag_id),
+        )
         self._conn.commit()
 
     def get_image_tags(self, image_id: int) -> list[ImageTag]:
@@ -386,30 +377,50 @@ class DatabaseManager:
             "SELECT * FROM image_tags WHERE image_id = ?", (image_id,)
         ).fetchall()
         return [
-            ImageTag(id=r[0], image_id=r[1], tag_id=r[2], value=r[3])
+            ImageTag(id=r[0], image_id=r[1], tag_id=r[2])
             for r in rows
         ]
 
-    def get_images_with_tag(
-        self, tag_id: int, value: str | None = None
-    ) -> list[ImageRecord]:
-        """Get all images that have a specific tag (and optionally a specific value)."""
+    def get_images_with_tag(self, tag_id: int) -> list[ImageRecord]:
+        """Get all images that have a specific tag."""
         self._ensure_open()
-        if value is None:
-            rows = self._conn.execute(
-                """SELECT i.* FROM images i
-                JOIN image_tags it ON i.id = it.image_id
-                WHERE it.tag_id = ?""",
-                (tag_id,),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                """SELECT i.* FROM images i
-                JOIN image_tags it ON i.id = it.image_id
-                WHERE it.tag_id = ? AND it.value = ?""",
-                (tag_id, value),
-            ).fetchall()
+        rows = self._conn.execute(
+            """SELECT i.* FROM images i
+            JOIN image_tags it ON i.id = it.image_id
+            WHERE it.tag_id = ?""",
+            (tag_id,),
+        ).fetchall()
         return [self._row_to_image(row) for row in rows]
+
+    def get_descendant_tag_ids(
+        self, tag_id: int, include_self: bool = True
+    ) -> list[int]:
+        """Get all descendant tag definition IDs for wildcard queries.
+
+        Args:
+            tag_id: The root tag definition ID.
+            include_self: If True, include tag_id itself in results.
+
+        Returns:
+            List of tag definition IDs.
+        """
+        self._ensure_open()
+        result: list[int] = []
+        if include_self:
+            result.append(tag_id)
+        # BFS to find all descendants
+        queue = [tag_id]
+        while queue:
+            parent = queue.pop(0)
+            rows = self._conn.execute(
+                "SELECT id FROM tag_definitions WHERE parent_id = ?",
+                (parent,),
+            ).fetchall()
+            for row in rows:
+                child_id = row[0]
+                result.append(child_id)
+                queue.append(child_id)
+        return result
 
     # --- Duplicate Group CRUD ---
 

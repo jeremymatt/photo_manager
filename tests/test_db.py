@@ -46,7 +46,7 @@ class TestDatabaseCreation:
     def test_resolve_tag_path(self, db):
         tag = db.resolve_tag_path("event.birthday.Alice")
         assert tag is not None
-        assert tag.name == "Alice"
+        assert tag.name == "alice"
 
         tag = db.resolve_tag_path("datetime.year")
         assert tag is not None
@@ -142,35 +142,48 @@ class TestImageTags:
         img_id = db.add_image(ImageRecord(
             filepath="tagged.jpg", filename="tagged.jpg"
         ))
-        person_tag = db.resolve_tag_path("person")
-        assert person_tag is not None
+        alice_tag = db.ensure_tag_path("person.alice")
+        assert alice_tag is not None
 
-        db.set_image_tag(img_id, person_tag.id, "Alice")
+        db.set_image_tag(img_id, alice_tag.id)
         tags = db.get_image_tags(img_id)
         assert len(tags) == 1
-        assert tags[0].value == "Alice"
+        assert tags[0].tag_id == alice_tag.id
 
     def test_remove_tag(self, db):
         img_id = db.add_image(ImageRecord(
             filepath="tagged2.jpg", filename="tagged2.jpg"
         ))
-        person_tag = db.resolve_tag_path("person")
-        db.set_image_tag(img_id, person_tag.id, "Bob")
-        db.remove_image_tag(img_id, person_tag.id, "Bob")
+        bob_tag = db.ensure_tag_path("person.bob")
+        db.set_image_tag(img_id, bob_tag.id)
+        db.remove_image_tag(img_id, bob_tag.id)
 
         tags = db.get_image_tags(img_id)
         assert len(tags) == 0
 
     def test_get_images_with_tag(self, db):
-        person_tag = db.resolve_tag_path("person")
+        alice_tag = db.ensure_tag_path("person.alice")
+        bob_tag = db.ensure_tag_path("person.bob")
         id1 = db.add_image(ImageRecord(filepath="a.jpg", filename="a.jpg"))
         id2 = db.add_image(ImageRecord(filepath="b.jpg", filename="b.jpg"))
-        db.set_image_tag(id1, person_tag.id, "Alice")
-        db.set_image_tag(id2, person_tag.id, "Bob")
+        db.set_image_tag(id1, alice_tag.id)
+        db.set_image_tag(id2, bob_tag.id)
 
-        alice_images = db.get_images_with_tag(person_tag.id, "Alice")
+        alice_images = db.get_images_with_tag(alice_tag.id)
         assert len(alice_images) == 1
         assert alice_images[0].filepath == "a.jpg"
+
+    def test_get_descendant_tag_ids(self, db):
+        outdoor = db.resolve_tag_path("scene.outdoor")
+        assert outdoor is not None
+        # outdoor has children: lake, hike
+        ids_inclusive = db.get_descendant_tag_ids(outdoor.id, include_self=True)
+        assert outdoor.id in ids_inclusive
+        assert len(ids_inclusive) >= 3  # outdoor + lake + hike
+
+        ids_exclusive = db.get_descendant_tag_ids(outdoor.id, include_self=False)
+        assert outdoor.id not in ids_exclusive
+        assert len(ids_exclusive) >= 2  # lake + hike
 
 
 class TestDuplicateGroups:
@@ -236,7 +249,7 @@ class TestTagTree:
         alice = db.resolve_tag_path("event.birthday.Alice")
         assert alice is not None
         path = db.get_tag_path(alice.id)
-        assert path == "event.birthday.Alice"
+        assert path == "event.birthday.alice"
 
         # Root-level tag
         event = db.resolve_tag_path("event")

@@ -112,9 +112,10 @@ class DirectoryScanner:
                     tag_values = match_filepath(rel_path_str, templates)
                     if tag_values:
                         for tag_path, value in tag_values.items():
-                            tag_def = self._db.resolve_tag_path(tag_path)
-                            if tag_def:
-                                self._db.set_image_tag(image_id, tag_def.id, value)
+                            # Create child tag node: e.g. scene + lake → scene.lake
+                            full_path = f"{tag_path}.{value}".lower()
+                            tag_def = self._db.ensure_tag_path(full_path)
+                            self._db.set_image_tag(image_id, tag_def.id)
                     else:
                         # No template matched — check on_mismatch
                         tmpl_opts = getattr(templates[0], "options", None)

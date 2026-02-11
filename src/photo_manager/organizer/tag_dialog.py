@@ -133,9 +133,9 @@ class TagDialog(QDialog):
         # Track which fields the user explicitly changed
         self._edited_fields: set[str] = set()
 
-        # Pending tag changes
-        self._pending_adds: list[tuple[int, str | None]] = []  # (tag_id, value)
-        self._pending_removes: list[tuple[int, str | None]] = []  # (tag_id, value)
+        # Pending tag changes (presence-based: just tag IDs)
+        self._pending_adds: list[int] = []
+        self._pending_removes: list[int] = []
 
         self.setWindowTitle(
             f"Edit Tags — {len(image_records)} image(s)"
@@ -224,7 +224,7 @@ class TagDialog(QDialog):
 
         # Tag tree
         self._tag_tree = QTreeWidget()
-        columns = ["Tag Path", "Value"]
+        columns = ["Tag Path"]
         if self._multi:
             columns.append("Status")
         self._tag_tree.setHeaderLabels(columns)
@@ -240,9 +240,7 @@ class TagDialog(QDialog):
         # Add tag row
         add_layout = QHBoxLayout()
         self._txt_tag_path = QLineEdit()
-        self._txt_tag_path.setPlaceholderText("Tag path (e.g. person.Alice)")
-        self._txt_tag_value = QLineEdit()
-        self._txt_tag_value.setPlaceholderText("Value (optional)")
+        self._txt_tag_path.setPlaceholderText("Tag path (e.g. person.alice)")
 
         # Auto-complete from existing tag definitions
         self._setup_completer()
@@ -251,8 +249,7 @@ class TagDialog(QDialog):
         self._btn_add.clicked.connect(self._add_tag)
         self._txt_tag_path.returnPressed.connect(self._add_tag)
 
-        add_layout.addWidget(self._txt_tag_path, 2)
-        add_layout.addWidget(self._txt_tag_value, 1)
+        add_layout.addWidget(self._txt_tag_path, 3)
         add_layout.addWidget(self._btn_add)
         vbox.addLayout(add_layout)
 
@@ -297,8 +294,8 @@ class TagDialog(QDialog):
         self._set_text_field(self._txt_state, [r.state for r in records])
 
         # --- Dynamic tags ---
-        # Build a map of {(tag_path, value): count}
-        tag_counts: dict[tuple[str, str | None], int] = {}
+        # Build a map of {tag_path: count}
+        tag_counts: dict[str, int] = {}
         self._tag_id_map: dict[str, int] = {}  # path -> tag_id
 
         for record in records:
@@ -308,19 +305,16 @@ class TagDialog(QDialog):
             for it in image_tags:
                 path = self._db.get_tag_path(it.tag_id)
                 self._tag_id_map[path] = it.tag_id
-                key = (path, it.value)
-                tag_counts[key] = tag_counts.get(key, 0) + 1
+                tag_counts[path] = tag_counts.get(path, 0) + 1
 
         total = len(records)
-        for (path, value), count in sorted(tag_counts.items()):
+        for path, count in sorted(tag_counts.items()):
             item = QTreeWidgetItem()
             item.setText(0, path)
-            item.setText(1, value or "")
             if self._multi:
                 status = "all" if count == total else f"{count}/{total}"
-                item.setText(2, status)
+                item.setText(1, status)
             item.setData(0, Qt.ItemDataRole.UserRole, path)
-            item.setData(1, Qt.ItemDataRole.UserRole, value)
             self._tag_tree.addTopLevelItem(item)
 
     def _set_checkbox(self, chk: QCheckBox, values: list[bool]) -> None:
@@ -341,32 +335,27 @@ class TagDialog(QDialog):
             widget.setPlaceholderText(_MULTIPLE_VALUES)
 
     def _add_tag(self) -> None:
-        path = self._txt_tag_path.text().strip()
+        path = self._txt_tag_path.text().strip().lower()
         if not path:
             self._status_label.setText("Enter a tag path")
             self._status_label.setStyleSheet("color: orange;")
             return
 
-        value = self._txt_tag_value.text().strip() or None
-
         # Ensure the tag definition exists (creates if needed)
         tag_def = self._db.ensure_tag_path(path)
         self._tag_id_map[path] = tag_def.id
-        self._pending_adds.append((tag_def.id, value))
+        self._pending_adds.append(tag_def.id)
 
         # Add to tree widget
         item = QTreeWidgetItem()
         item.setText(0, path)
-        item.setText(1, value or "")
         if self._multi:
-            item.setText(2, "pending")
+            item.setText(1, "pending")
         item.setData(0, Qt.ItemDataRole.UserRole, path)
-        item.setData(1, Qt.ItemDataRole.UserRole, value)
         self._tag_tree.addTopLevelItem(item)
 
-        # Clear inputs
+        # Clear input
         self._txt_tag_path.clear()
-        self._txt_tag_value.clear()
         self._status_label.setText(f"Added: {path}")
         self._status_label.setStyleSheet("color: green;")
 
@@ -382,10 +371,9 @@ class TagDialog(QDialog):
 
         for item in selected:
             path = item.data(0, Qt.ItemDataRole.UserRole)
-            value = item.data(1, Qt.ItemDataRole.UserRole)
             tag_id = self._tag_id_map.get(path)
             if tag_id is not None:
-                self._pending_removes.append((tag_id, value))
+                self._pending_removes.append(tag_id)
             idx = self._tag_tree.indexOfTopLevelItem(item)
             if idx >= 0:
                 self._tag_tree.takeTopLevelItem(idx)
@@ -428,10 +416,10 @@ class TagDialog(QDialog):
             self._db.update_image(record)
 
             # --- Dynamic tags ---
-            for tag_id, value in self._pending_adds:
-                self._db.set_image_tag(record.id, tag_id, value)
+            for tag_id in self._pending_adds:
+                self._db.set_image_tag(record.id, tag_id)
 
-            for tag_id, value in self._pending_removes:
-                self._db.remove_image_tag(record.id, tag_id, value)
+            for tag_id in self._pending_removes:
+                self._db.remove_image_tag(record.id, tag_id)
 
         self.accept()

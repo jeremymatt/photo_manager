@@ -574,6 +574,8 @@ class TestNewKeyMapActions:
         )
         single_actions = set(_SINGLE_KEY_MAP.values())
         assert OrganizerAction.MARK_DELETE in single_actions
+        assert OrganizerAction.COPY_TAGS in single_actions
+        assert OrganizerAction.PASTE_TAGS in single_actions
         assert OrganizerAction.APPLY_TAGS_TO_FOLDER in single_actions
         assert OrganizerAction.MARK_DELETE_FOLDER in single_actions
         assert OrganizerAction.REVIEW_DELETIONS in single_actions
@@ -586,6 +588,9 @@ class TestNewKeyMapActions:
             OrganizerAction,
         )
         grid_actions = set(_GRID_KEY_MAP.values())
+        assert OrganizerAction.COPY_TAGS in grid_actions
+        assert OrganizerAction.PASTE_TAGS in grid_actions
+        assert OrganizerAction.APPLY_TAGS_TO_FOLDER in grid_actions
         assert OrganizerAction.MARK_DELETE in grid_actions
         assert OrganizerAction.REVIEW_DELETIONS in grid_actions
         assert OrganizerAction.EXECUTE_DELETIONS in grid_actions
@@ -599,7 +604,9 @@ class TestNewKeyMapActions:
         from PyQt6.QtCore import Qt
 
         assert _SINGLE_KEY_MAP[(Qt.Key.Key_Period, frozenset())] == OrganizerAction.MARK_DELETE
-        assert _SINGLE_KEY_MAP[(Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier}))] == OrganizerAction.APPLY_TAGS_TO_FOLDER
+        assert _SINGLE_KEY_MAP[(Qt.Key.Key_C, frozenset({Qt.KeyboardModifier.ControlModifier}))] == OrganizerAction.COPY_TAGS
+        assert _SINGLE_KEY_MAP[(Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier}))] == OrganizerAction.PASTE_TAGS
+        assert _SINGLE_KEY_MAP[(Qt.Key.Key_V, frozenset({Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.ShiftModifier}))] == OrganizerAction.APPLY_TAGS_TO_FOLDER
         assert _SINGLE_KEY_MAP[(Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.AltModifier}))] == OrganizerAction.MARK_DELETE_FOLDER
         assert _SINGLE_KEY_MAP[(Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.AltModifier}))] == OrganizerAction.REVIEW_DELETIONS
         assert _SINGLE_KEY_MAP[(Qt.Key.Key_D, frozenset({Qt.KeyboardModifier.ControlModifier}))] == OrganizerAction.EXECUTE_DELETIONS
@@ -950,3 +957,123 @@ class TestImageSourceDupFilter:
         rec = source.get_record(0)
         assert rec is not None
         assert rec.to_delete is False  # These are the dup group images
+
+
+class TestQueryFilter:
+    """Test query filter action and ImageSource query methods."""
+
+    def test_query_filter_enum_exists(self):
+        from photo_manager.organizer.organizer_key_handler import OrganizerAction
+        assert hasattr(OrganizerAction, "QUERY_FILTER")
+
+    def test_f5_maps_to_query_filter_single(self):
+        from photo_manager.organizer.organizer_key_handler import (
+            _SINGLE_KEY_MAP,
+            OrganizerAction,
+        )
+        from PyQt6.QtCore import Qt
+        assert _SINGLE_KEY_MAP[(Qt.Key.Key_F5, frozenset())] == OrganizerAction.QUERY_FILTER
+
+    def test_f5_maps_to_query_filter_grid(self):
+        from photo_manager.organizer.organizer_key_handler import (
+            _GRID_KEY_MAP,
+            OrganizerAction,
+        )
+        from PyQt6.QtCore import Qt
+        assert _GRID_KEY_MAP[(Qt.Key.Key_F5, frozenset())] == OrganizerAction.QUERY_FILTER
+
+    def test_query_expression_default_none(self, tmp_path):
+        from photo_manager.organizer.image_source import ImageSource
+        db = DatabaseManager()
+        db.create_database(tmp_path / "q.db")
+        source = ImageSource(db)
+        assert source.query_expression is None
+
+    def test_apply_query_filters_records(self, tmp_path):
+        from photo_manager.db.models import ImageRecord
+        from photo_manager.organizer.image_source import ImageSource
+
+        db = DatabaseManager()
+        db.create_database(tmp_path / "q.db")
+        for i, year in enumerate([2020, 2021, 2022]):
+            rec = ImageRecord(
+                filepath=f"img_{i}.jpg", filename=f"img_{i}.jpg",
+                year=year,
+            )
+            db.add_image(rec)
+
+        source = ImageSource(db)
+        assert source.total == 3
+
+        source.apply_query("tag.datetime.year==2021")
+        assert source.total == 1
+        assert source.query_expression == "tag.datetime.year==2021"
+        rec = source.get_record(0)
+        assert rec is not None
+        assert rec.year == 2021
+
+    def test_clear_query_restores_all(self, tmp_path):
+        from photo_manager.db.models import ImageRecord
+        from photo_manager.organizer.image_source import ImageSource
+
+        db = DatabaseManager()
+        db.create_database(tmp_path / "q.db")
+        for i in range(4):
+            rec = ImageRecord(
+                filepath=f"img_{i}.jpg", filename=f"img_{i}.jpg",
+                year=2020 + i,
+            )
+            db.add_image(rec)
+
+        source = ImageSource(db)
+        source.apply_query("tag.datetime.year>=2022")
+        assert source.total == 2
+        assert source.query_expression is not None
+
+        source.clear_query()
+        assert source.total == 4
+        assert source.query_expression is None
+
+
+class TestLowercaseTags:
+    """Test that tag names are normalized to lowercase."""
+
+    def test_ensure_tag_path_lowercases(self, tmp_path):
+        db = DatabaseManager()
+        db.create_database(tmp_path / "lc.db")
+        tag_def = db.ensure_tag_path("Person.Alice")
+        assert tag_def.name == "alice"
+        # Parent should also be lowercase
+        parent = db.get_tag_definition(tag_def.parent_id)
+        assert parent.name == "person"
+
+    def test_get_tag_definition_by_name_case_insensitive(self, tmp_path):
+        db = DatabaseManager()
+        db.create_database(tmp_path / "lc.db")
+        db.ensure_tag_path("person.alice")
+        # Lookup with mixed case should still find it
+        root = db.get_tag_definition_by_name("Person")
+        assert root is not None
+        assert root.name == "person"
+        child = db.get_tag_definition_by_name("ALICE", root.id)
+        assert child is not None
+        assert child.name == "alice"
+
+    def test_resolve_tag_path_case_insensitive(self, tmp_path):
+        db = DatabaseManager()
+        db.create_database(tmp_path / "lc.db")
+        db.ensure_tag_path("event.birthday")
+        result = db.resolve_tag_path("Event.Birthday")
+        assert result is not None
+        assert result.name == "birthday"
+
+    def test_seed_tags_are_lowercase(self, tmp_path):
+        db = DatabaseManager()
+        db.create_database(tmp_path / "lc.db")
+        # Check that Alice/Bob seed tags are lowercase
+        person = db.get_tag_definition_by_name("person")
+        assert person is not None
+        alice = db.get_tag_definition_by_name("alice", person.id)
+        assert alice is not None
+        bob = db.get_tag_definition_by_name("bob", person.id)
+        assert bob is not None
