@@ -82,6 +82,9 @@ pip install -e .
 
 # Install with dev dependencies (pytest)
 pip install -e ".[dev]"
+
+# Add src to pythonpath
+$env:PYTHONPATH = "src"
 ```
 
 **Dependencies:**
@@ -90,9 +93,50 @@ pip install -e ".[dev]"
 - `PyYAML >= 6.0` -- Configuration files
 - `PyQt6 >= 6.5` -- GUI framework
 
+### Quick Install (p_man launcher)
+
+These scripts create a repo-local `.venv`, install the package in editable mode, and add the venv `Scripts`/`bin` directory to your **user PATH** so you can run `p_man` from anywhere. Restart your shell after running.
+
+**Windows (PowerShell):**
+```powershell
+.\install_windows.ps1
+```
+
+**Linux (bash):**
+```bash
+./install_linux.sh
+```
+
+**WSL (bash):**
+```bash
+./install_wsl.sh
+```
+
+WSL uses the Windows `p_man` command and expects **Windows-style paths** (e.g., `D:\Photos`).
+
 ---
 
 ## Usage
+
+### Unified Launcher (p_man)
+
+`p_man [path]` defaults to the **current directory** if no path is provided.
+
+Behavior:
+- If the directory contains a database file (`.db`, `.sqlite`, `.sqlite3`), it opens the **organizer** with that DB.
+- If no DB is found, it opens the **viewer** and scans recursively (no import).
+- `--import` imports the target directory; with `--db` it uses that DB, otherwise the organizer will prompt for a DB.
+- If multiple DB files are found, you will be prompted to select one.
+- All viewer/organizer flags are passed through (e.g., `--view`, `--fullscreen`, `--slideshow`, `--query`, `--config`).
+
+Examples:
+```bash
+p_man
+p_man D:\Photos
+p_man --import D:\Photos
+p_man --import --db D:\Photos\my.db
+p_man D:\Photos --view single --fullscreen
+```
 
 ### Viewer
 

@@ -14,6 +14,9 @@ dependencies = [
     "PyQt6>=6.5",
 ]
 
+[project.scripts]
+p_man = "photo_manager.launcher:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",

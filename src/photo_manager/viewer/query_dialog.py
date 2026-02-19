@@ -98,7 +98,26 @@ class QueryDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _populate_tag_tree(self) -> None:
-        """Build the tag picker tree from the database tag tree."""
+        """Build the tag picker tree showing only tags actually applied to images."""
+        # Get tag IDs actually used in image_tags
+        rows = self._db.execute_query(
+            "SELECT DISTINCT tag_id FROM image_tags", ()
+        )
+        used_ids: set[int] = {r[0] for r in rows}
+        if not used_ids:
+            return
+
+        # Collect ancestor IDs so parent nodes are shown for hierarchy
+        all_tags = {t.id: t for t in self._db.get_all_tag_definitions()}
+        relevant_ids: set[int] = set()
+        for tag_id in used_ids:
+            current = tag_id
+            while current is not None and current not in relevant_ids:
+                relevant_ids.add(current)
+                parent_id = all_tags[current].parent_id
+                current = parent_id
+
+        # Build filtered tree
         tree_data = self._db.get_tag_tree()
 
         def add_nodes(
@@ -108,6 +127,8 @@ class QueryDialog(QDialog):
         ) -> None:
             for node in nodes:
                 tag = node["tag"]
+                if tag.id not in relevant_ids:
+                    continue
                 path = f"{prefix}.{tag.name}" if prefix else tag.name
                 item = QTreeWidgetItem()
                 item.setText(0, path)
