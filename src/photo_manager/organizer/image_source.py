@@ -32,6 +32,8 @@ class ImageSource(QObject):
         self._dup_group_index: int = 0
         self._dup_groups: list[DuplicateGroup] = []
         self._dup_filtered_indices: list[int] = []
+        self._folder_filter: str | None = None
+        self._folder_filtered_indices: list[int] = []
         self._db_dir = (
             db.db_path.parent.resolve() if db.db_path else Path(".")
         )
@@ -43,11 +45,21 @@ class ImageSource(QObject):
             return len(self._dup_filtered_indices)
         if self._delete_filter:
             return len(self._filtered_indices)
+        if self._folder_filter is not None:
+            return len(self._folder_filtered_indices)
         return len(self._records)
 
     @property
     def is_filtered(self) -> bool:
-        return self._delete_filter or self._dup_filter
+        return (
+            self._delete_filter
+            or self._dup_filter
+            or self._folder_filter is not None
+        )
+
+    @property
+    def folder_filter(self) -> str | None:
+        return self._folder_filter
 
     @property
     def is_dup_filtered(self) -> bool:
@@ -82,6 +94,10 @@ class ImageSource(QObject):
             if 0 <= index < len(self._filtered_indices):
                 return self._records[self._filtered_indices[index]]
             return None
+        if self._folder_filter is not None:
+            if 0 <= index < len(self._folder_filtered_indices):
+                return self._records[self._folder_filtered_indices[index]]
+            return None
         if 0 <= index < len(self._records):
             return self._records[index]
         return None
@@ -105,8 +121,49 @@ class ImageSource(QObject):
                 self._resolve_path(self._records[i].filepath)
                 for i in self._filtered_indices
             ]
+        if self._folder_filter is not None:
+            return [
+                self._resolve_path(self._records[i].filepath)
+                for i in self._folder_filtered_indices
+            ]
         return [
             self._resolve_path(r.filepath) for r in self._records
+        ]
+
+    def available_folders(self) -> list[str]:
+        """Sorted list of distinct parent folders across the (unfiltered) records."""
+        seen: set[str] = set()
+        for r in self._records:
+            seen.add(self._record_folder(r))
+        return sorted(seen)
+
+    def folder_for_index(self, index: int) -> str | None:
+        """Parent folder of the record at the given (filtered-view) index."""
+        record = self.get_record(index)
+        if record is None:
+            return None
+        return self._record_folder(record)
+
+    def set_folder_filter(self, folder: str | None) -> None:
+        """Restrict visible records to those whose parent folder matches.
+
+        Pass None to clear the folder filter.
+        """
+        self._folder_filter = folder
+        self._rebuild_folder_filter()
+        self.images_changed.emit()
+
+    def _record_folder(self, record: ImageRecord) -> str:
+        return str(Path(self._resolve_path(record.filepath)).parent)
+
+    def _rebuild_folder_filter(self) -> None:
+        if self._folder_filter is None:
+            self._folder_filtered_indices = []
+            return
+        target = str(Path(self._folder_filter))
+        self._folder_filtered_indices = [
+            i for i, r in enumerate(self._records)
+            if self._record_folder(r) == target
         ]
 
     def get_dup_member(self, image_id: int) -> DuplicateGroupMember | None:
@@ -193,25 +250,37 @@ class ImageSource(QObject):
             self._filtered_indices = []
         if self._dup_filter:
             self._rebuild_dup_filter()
+        if self._folder_filter is not None:
+            self._rebuild_folder_filter()
 
     def _rebuild_dup_filter(self) -> None:
         """Rebuild filtered indices for the current duplicate group.
 
-        Matches group member image_ids against _records indices.
-        Sorts by file_size descending (largest first).
+        Hybrid quality sort: bucket pixel area to ~5% precision so trivial
+        dimension differences tie, then break ties by file_size (a proxy
+        for compression quality — higher bytes-per-pixel == less aggressive
+        re-encoding == better "keep" candidate).
         """
+        import math
+
         group = self.current_dup_group
         if group is None:
             self._dup_filtered_indices = []
             return
 
+        def quality_key(r) -> tuple[int, int]:
+            area = (r.width or 0) * (r.height or 0)
+            fs = r.file_size or 0
+            if area <= 0:
+                return (0, fs)
+            # log buckets ~5% wide: e^(1/20) ≈ 1.051
+            return (round(math.log(area) * 20), fs)
+
         member_ids = {m.image_id for m in group.members}
-        # Build (index, file_size) pairs for members found in records
         matches = []
         for i, r in enumerate(self._records):
             if r.id in member_ids:
-                matches.append((i, r.file_size or 0))
-        # Sort by file_size descending
+                matches.append((i, quality_key(r)))
         matches.sort(key=lambda x: x[1], reverse=True)
         self._dup_filtered_indices = [idx for idx, _ in matches]
 

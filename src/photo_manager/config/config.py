@@ -70,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "thumbnail_cache_count": 500,
         "quick_toggle_bindings": {
             "F": ["set_favorite"],
-            "D": ["set_to_delete"],
+            "D": ["toggle_to_delete"],
             "R": ["set_reviewed"],
             "Ctrl+.": ["clear_to_delete", "next_image"],
         },
@@ -93,6 +93,20 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _migrate_config(config: dict) -> tuple[dict, bool]:
+    """Upgrade known stale config patterns in-place. Returns (config, changed)."""
+    changed = False
+    bindings = (
+        config.get("organizer", {}).get("quick_toggle_bindings")
+    )
+    if isinstance(bindings, dict):
+        # `D: [set_to_delete]` was the old default; now `toggle_to_delete`.
+        if bindings.get("D") == ["set_to_delete"]:
+            bindings["D"] = ["toggle_to_delete"]
+            changed = True
+    return config, changed
 
 
 def get_db_config_path(db_path: str | Path) -> Path:
@@ -127,7 +141,8 @@ class ConfigManager:
         self._path = path
         with open(path, "r", encoding="utf-8") as f:
             user_config = yaml.safe_load(f) or {}
-        self._config = _deep_merge(DEFAULT_CONFIG, user_config)
+        merged = _deep_merge(DEFAULT_CONFIG, user_config)
+        self._config, _changed = _migrate_config(merged)
 
     def save(self, config_path: str | Path | None = None) -> None:
         """Save current config to YAML file."""
@@ -194,6 +209,11 @@ class ConfigManager:
                 with open(cli_config_path, "r", encoding="utf-8") as f:
                     cli_config = yaml.safe_load(f) or {}
                 self._config = _deep_merge(self._config, cli_config)
+
+        self._config, changed = _migrate_config(self._config)
+        # Persist migrations back to the per-DB config so the YAML stays in sync.
+        if changed and self._session_path is not None:
+            self.save_session()
 
     def save_session(self) -> None:
         """Save current config to the session (per-DB) config file."""

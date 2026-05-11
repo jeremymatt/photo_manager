@@ -39,6 +39,19 @@ ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("Tab", "Toggle grid / single-image view"),
         ("F11", "Toggle fullscreen"),
     ]),
+    ("Grid View", [
+        ("Click", "Select image"),
+        ("Ctrl+Click", "Toggle selection on/off"),
+        ("Shift+Click", "Extend selection from anchor (Windows-style)"),
+        ("Ctrl+A", "Select all in current view"),
+        ("Arrow keys", "Move selection"),
+        ("Alt+Right / Left", "Next / previous folder (folder view only)"),
+        ("Double-click / Enter", "Open in single view"),
+        ("Red X overlay", "Image is marked for deletion"),
+        ("Sidebar slider", "Adjust thumbnail size"),
+        ("Sidebar dropdown", "Switch view: All / Current Folder / Duplicates"),
+        ("Sidebar 'Edit Tags…'", "Batch edit tags (selected, or all visible)"),
+    ]),
     ("Navigation (Single View)", [
         ("Right / Left", "Next / previous image"),
         ("Alt+Right / Left", "Next / previous folder"),
@@ -60,18 +73,19 @@ ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("- / _", "Decrease GIF speed"),
     ]),
     ("Tags", [
-        ("F2", "Edit tags dialog"),
+        ("F2", "Edit tags dialog (selected images)"),
+        ("Sidebar 'Edit Tags…'", "Batch edit tags on selection or all visible"),
         ("Ctrl+T", "Edit keybindings"),
         ("Alt+Shift+T", "Show tag hotkeys"),
         ("Ctrl+C", "Copy scene/event/person tags"),
         ("Ctrl+V", "Paste copied tags to image"),
         ("Ctrl+Shift+V", "Apply copied tags to folder/dup group"),
         ("F", "Set favorite (default)"),
-        ("D", "Set to-delete (default)"),
+        ("D", "Toggle to-delete on selection (default)"),
         ("R", "Set reviewed (default)"),
     ]),
     ("Delete", [
-        (".", "Mark for deletion & next"),
+        (".", "Mark selection for deletion; advance to next folder/dup group"),
         ("Alt+.", "Unmark deletion & next"),
         ("Ctrl+Alt+D", "Mark folder & next folder"),
         ("Alt+D", "Review marked images"),
@@ -84,6 +98,8 @@ ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("Ctrl+K", "Mark image as kept"),
         ("Ctrl+N", "Toggle not-a-duplicate"),
         ("Ctrl+D", "Delete unmarked duplicates"),
+        ("Auto-select", "Smaller members pre-selected; biggest in top-left"),
+        ("Corner label", "Shows WxH | size on each thumbnail"),
     ]),
     ("Database", [
         ("F4", "Import directory"),
@@ -133,6 +149,8 @@ class OrganizerWindow(QMainWindow):
         self._view_manager.single_view.current_index_changed.connect(
             self._on_image_changed
         )
+        self._view_manager.batch_tags_requested.connect(self._batch_edit_tags)
+        self._view_manager.grid_repopulated.connect(self._on_grid_repopulated)
 
         # Key handler
         self._key_handler = OrganizerKeyHandler(self)
@@ -247,13 +265,25 @@ class OrganizerWindow(QMainWindow):
         elif action == OrganizerAction.NEXT_FOLDER:
             if self._source.is_dup_filtered:
                 self._next_dup_group()
-            else:
+            elif (
+                self._view_manager.mode == ViewMode.GRID
+                and self._source.folder_filter is not None
+            ):
+                self._advance_folder(+1)
+            elif self._view_manager.mode == ViewMode.SINGLE:
                 single.navigate_next_folder()
+            # else (grid + all-images): no-op
         elif action == OrganizerAction.PREV_FOLDER:
             if self._source.is_dup_filtered:
                 self._prev_dup_group()
-            else:
+            elif (
+                self._view_manager.mode == ViewMode.GRID
+                and self._source.folder_filter is not None
+            ):
+                self._advance_folder(-1)
+            elif self._view_manager.mode == ViewMode.SINGLE:
                 single.navigate_prev_folder()
+            # else (grid + all-images): no-op
         elif action == OrganizerAction.ROTATE_CCW:
             single.canvas.rotate_ccw()
         elif action == OrganizerAction.ROTATE_CW:
@@ -306,10 +336,7 @@ class OrganizerWindow(QMainWindow):
         elif action == OrganizerAction.APPLY_TAGS_TO_FOLDER:
             self._apply_tags_to_folder()
         elif action == OrganizerAction.MARK_DELETE:
-            if self._source.is_dup_filtered:
-                self._mark_dup_group_delete()
-            else:
-                self._mark_delete()
+            self._mark_delete()
         elif action == OrganizerAction.UNMARK_DELETE:
             if self._source.is_dup_filtered:
                 self._unmark_dup_group_delete()
@@ -338,6 +365,9 @@ class OrganizerWindow(QMainWindow):
             self._keep_image()
         elif action == OrganizerAction.SAVE_WITH_ROTATION:
             self._save_with_rotation()
+        elif action == OrganizerAction.SELECT_ALL:
+            if self._view_manager.mode == ViewMode.GRID:
+                self._view_manager.grid_view.select_all()
         elif action == OrganizerAction.QUIT:
             self.close()
 
@@ -403,6 +433,8 @@ class OrganizerWindow(QMainWindow):
         self._view_manager.single_view.current_index_changed.connect(
             self._on_image_changed
         )
+        self._view_manager.batch_tags_requested.connect(self._batch_edit_tags)
+        self._view_manager.grid_repopulated.connect(self._on_grid_repopulated)
         self._key_handler.load_all_bindings(self._config)
         self._key_handler.grid_mode = (self._view_manager.mode == ViewMode.GRID)
         self._update_status()
@@ -452,6 +484,41 @@ class OrganizerWindow(QMainWindow):
             self._update_overlay_tags()
             self._update_status()
 
+    def _batch_edit_tags(self) -> None:
+        """Sidebar entry-point: tag all selected, or all visible if none selected."""
+        records = self._get_selected_records()
+        scope_label = "selected"
+        if not records:
+            # Fall back to every currently-visible image
+            records = []
+            for i in range(self._source.total):
+                rec = self._source.get_record(i)
+                if rec is not None:
+                    records.append(rec)
+            scope_label = "visible"
+
+        if not records:
+            self._status_bar.showMessage("No images to tag")
+            return
+
+        # Confirm if scope is large
+        if scope_label == "visible" and len(records) > 1:
+            reply = QMessageBox.question(
+                self,
+                "Batch Edit Tags",
+                f"Apply tag changes to all {len(records)} visible images?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        dialog = TagDialog(self._db, records, parent=self)
+        if dialog.exec() == TagDialog.DialogCode.Accepted:
+            self._source.refresh()
+            self._update_overlay_tags()
+            self._update_status()
+
     def _edit_keybindings(self) -> None:
         """Open keybinding editor dialog."""
         dialog = KeybindingDialog(self._config, self._key_handler, parent=self)
@@ -478,6 +545,20 @@ class OrganizerWindow(QMainWindow):
                         continue
                     setattr(record, field, is_set)
                     self._db.update_image(record)
+                if field == "to_delete":
+                    self._refresh_grid_delete_overlay()
+
+            # Toggle to_delete: mark all if any are unmarked, else clear all.
+            elif action_str == "toggle_to_delete":
+                if not records:
+                    continue
+                new_value = any(not r.to_delete for r in records)
+                for record in records:
+                    if record.id is None:
+                        continue
+                    record.to_delete = new_value
+                    self._db.update_image(record)
+                self._refresh_grid_delete_overlay()
 
             # Dynamic tag add/remove
             elif action_str.startswith("tag:"):
@@ -672,19 +753,28 @@ class OrganizerWindow(QMainWindow):
             self._status_bar.showMessage(f"All tags already present in {label}")
 
     def _mark_delete(self) -> None:
-        """Mark selected images for deletion and advance."""
+        """Mark selected images for deletion and advance per view mode."""
         records = self._get_selected_records()
         for record in records:
             if record.id is None:
                 continue
             record.to_delete = True
             self._db.update_image(record)
-
-        # In single view, advance to next image
-        if self._view_manager.mode == ViewMode.SINGLE:
-            self._view_manager.single_view.navigate_next()
+        self._refresh_grid_delete_overlay()
         self._update_overlay_tags()
         self._update_status()
+
+        # Advance per view mode
+        if self._view_manager.mode == ViewMode.SINGLE:
+            self._view_manager.single_view.navigate_next()
+        elif self._source.is_dup_filtered:
+            self._next_dup_group()
+        elif (
+            self._view_manager.mode == ViewMode.GRID
+            and self._source.folder_filter is not None
+        ):
+            self._advance_folder(+1)
+        # Else (grid + all-images): stay put
 
     def _unmark_delete(self) -> None:
         """Unmark selected images from deletion and advance."""
@@ -697,6 +787,7 @@ class OrganizerWindow(QMainWindow):
 
         if self._view_manager.mode == ViewMode.SINGLE:
             self._view_manager.single_view.navigate_next()
+        self._refresh_grid_delete_overlay()
         self._update_overlay_tags()
         self._update_status()
 
@@ -719,6 +810,7 @@ class OrganizerWindow(QMainWindow):
             self._db.update_image(record)
             marked += 1
 
+        self._refresh_grid_delete_overlay()
         self._status_bar.showMessage(
             f"Marked {marked} duplicate(s) for deletion"
         )
@@ -739,6 +831,7 @@ class OrganizerWindow(QMainWindow):
                 self._db.update_image(record)
                 unmarked += 1
 
+        self._refresh_grid_delete_overlay()
         self._status_bar.showMessage(
             f"Unmarked {unmarked} image(s) from deletion"
         )
@@ -762,6 +855,7 @@ class OrganizerWindow(QMainWindow):
         # Navigate to next folder
         if self._view_manager.mode == ViewMode.SINGLE:
             self._view_manager.single_view.navigate_next_folder()
+        self._refresh_grid_delete_overlay()
         self._update_overlay_tags()
         self._update_status()
 
@@ -944,16 +1038,34 @@ class OrganizerWindow(QMainWindow):
             return
         self._update_dup_status()
         self._update_dup_grid_labels()
+        self._apply_dup_corner_labels()
+        self._auto_select_dup_smaller()
+        self._view_manager.sync_view_mode_to_source()
 
     def _exit_dup_review(self) -> None:
         """Exit duplicate review mode."""
         self._source.set_dup_filter(False)
         self._view_manager.grid_view.set_dup_labels({})
+        self._view_manager.grid_view.set_corner_labels({})
         # Restore saved query filter
         if self._saved_query:
             self._source.apply_query(self._saved_query)
             self._saved_query = None
         self._status_bar.showMessage("Exited duplicate review")
+        self._view_manager.sync_view_mode_to_source()
+
+    def _advance_folder(self, direction: int) -> None:
+        """Cycle the grid's folder filter to the next/previous folder."""
+        folders = self._source.available_folders()
+        cur = self._source.folder_filter
+        if not folders or cur is None:
+            return
+        try:
+            idx = folders.index(cur)
+        except ValueError:
+            return
+        new_idx = (idx + direction) % len(folders)
+        self._source.set_folder_filter(folders[new_idx])
 
     def _next_dup_group(self) -> None:
         """Navigate to next duplicate group."""
@@ -966,6 +1078,8 @@ class OrganizerWindow(QMainWindow):
             self._source.set_dup_group(0)  # Wrap around
         self._update_dup_status()
         self._update_dup_grid_labels()
+        self._apply_dup_corner_labels()
+        self._auto_select_dup_smaller()
 
     def _prev_dup_group(self) -> None:
         """Navigate to previous duplicate group."""
@@ -978,6 +1092,8 @@ class OrganizerWindow(QMainWindow):
             self._source.set_dup_group(self._source.dup_group_count - 1)
         self._update_dup_status()
         self._update_dup_grid_labels()
+        self._apply_dup_corner_labels()
+        self._auto_select_dup_smaller()
 
     def _toggle_not_duplicate(self) -> None:
         """Toggle is_not_duplicate flag on current image (Ctrl+N)."""
@@ -1120,6 +1236,8 @@ class OrganizerWindow(QMainWindow):
         else:
             self._update_dup_status()
             self._update_dup_grid_labels()
+            self._apply_dup_corner_labels()
+            self._auto_select_dup_smaller()
             self._status_bar.showMessage(
                 f"Deleted {deleted} duplicate(s)"
             )
@@ -1134,7 +1252,7 @@ class OrganizerWindow(QMainWindow):
         )
 
     def _update_dup_grid_labels(self) -> None:
-        """Update DUP/KEEP labels on grid view thumbnails."""
+        """Update KEEP labels on grid view thumbnails (DUP is implicit in dup view)."""
         if not self._source.is_dup_filtered:
             self._view_manager.grid_view.set_dup_labels({})
             return
@@ -1146,14 +1264,75 @@ class OrganizerWindow(QMainWindow):
             record = self._source.get_record(i)
             if record and record.id:
                 member = self._source.get_dup_member(record.id)
-                if member:
-                    if member.is_kept:
-                        labels[i] = "KEEP"
-                    elif member.is_not_duplicate:
-                        labels[i] = ""
-                    else:
-                        labels[i] = "DUP"
+                if member and member.is_kept:
+                    labels[i] = "KEEP"
         self._view_manager.grid_view.set_dup_labels(labels)
+
+    def _refresh_grid_delete_overlay(self) -> None:
+        """Apply red-X overlay to grid cells whose record has to_delete=True."""
+        marks: dict[int, bool] = {}
+        for i in range(self._source.total):
+            record = self._source.get_record(i)
+            if record is not None and record.to_delete:
+                marks[i] = True
+        self._view_manager.grid_view.set_delete_marks(marks)
+
+    @staticmethod
+    def _format_size(n: int | None) -> str:
+        if n is None or n <= 0:
+            return ""
+        if n < 1024:
+            return f"{n} B"
+        kb = n / 1024
+        if kb < 1024:
+            return f"{kb:.0f} KB"
+        return f"{kb / 1024:.1f} MB"
+
+    def _apply_dup_corner_labels(self) -> None:
+        """Show WxH | size | bpp in the top-left of each thumbnail (dup view only)."""
+        if not self._source.is_dup_filtered:
+            self._view_manager.grid_view.set_corner_labels({})
+            return
+        labels: dict[int, str] = {}
+        for i in range(self._source.total):
+            record = self._source.get_record(i)
+            if record is None:
+                continue
+            parts = []
+            if record.width and record.height:
+                parts.append(f"{record.width}x{record.height}")
+            size_str = self._format_size(record.file_size)
+            if size_str:
+                parts.append(size_str)
+            # bytes-per-pixel: a quality proxy when dimensions are similar
+            if record.width and record.height and record.file_size:
+                bpp = record.file_size / (record.width * record.height)
+                parts.append(f"{bpp:.2f} bpp")
+            if parts:
+                labels[i] = " | ".join(parts)
+        self._view_manager.grid_view.set_corner_labels(labels)
+
+    def _auto_select_dup_smaller(self) -> None:
+        """In dup view, pre-select all members except the largest (index 0)."""
+        if not self._source.is_dup_filtered:
+            return
+        n = self._source.total
+        if n < 2:
+            return
+        # _rebuild_dup_filter sorts by area desc, so 0 is the largest.
+        self._view_manager.grid_view.select_indices(list(range(1, n)))
+
+    def _on_grid_repopulated(self) -> None:
+        """Re-apply per-cell overlays after the grid is rebuilt.
+
+        Auto-select for dup view is handled explicitly on group entry/switch
+        so that flag-toggle refreshes (e.g., Ctrl+K KEEP) don't clobber the
+        user's current selection.
+        """
+        self._refresh_grid_delete_overlay()
+        if self._source.is_dup_filtered:
+            self._update_dup_grid_labels()
+            self._apply_dup_corner_labels()
 
     def _update_status(self) -> None:
         db_name = (

@@ -45,6 +45,7 @@ class OrganizerAction(Enum):
     IMPORT_DIRECTORY = auto()
     CHECK_ADD_DIRECTORY = auto()
     QUERY_FILTER = auto()
+    SELECT_ALL = auto()
 
     # Tag management
     EDIT_TAGS = auto()
@@ -119,6 +120,7 @@ _SINGLE_KEY_MAP: dict[tuple[int, frozenset], OrganizerAction] = {
     (Qt.Key.Key_N, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.TOGGLE_NOT_DUPLICATE,
     (Qt.Key.Key_K, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.KEEP_IMAGE,
     (Qt.Key.Key_S, frozenset({Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.ShiftModifier})): OrganizerAction.SAVE_WITH_ROTATION,
+    (Qt.Key.Key_A, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.SELECT_ALL,
     (Qt.Key.Key_Escape, frozenset()): OrganizerAction.QUIT,
 }
 
@@ -146,6 +148,7 @@ _GRID_KEY_MAP: dict[tuple[int, frozenset], OrganizerAction] = {
     (Qt.Key.Key_Left, frozenset({Qt.KeyboardModifier.AltModifier})): OrganizerAction.PREV_FOLDER,
     (Qt.Key.Key_N, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.TOGGLE_NOT_DUPLICATE,
     (Qt.Key.Key_K, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.KEEP_IMAGE,
+    (Qt.Key.Key_A, frozenset({Qt.KeyboardModifier.ControlModifier})): OrganizerAction.SELECT_ALL,
     (Qt.Key.Key_Escape, frozenset()): OrganizerAction.QUIT,
 }
 

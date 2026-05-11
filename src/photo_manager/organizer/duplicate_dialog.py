@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
 from photo_manager.config.config import ConfigManager
 from photo_manager.db.manager import DatabaseManager
-from photo_manager.hashing.duplicates import DuplicateDetector
+from photo_manager.hashing.duplicates import DuplicateDetector, THRESHOLD_MAX
 
 
 class _DuplicateThread(QThread):
@@ -23,10 +25,10 @@ class _DuplicateThread(QThread):
     Opens its own DB connection since SQLite connections can't cross threads.
     """
 
-    progress = pyqtSignal(int, int)  # current_pairs, total_pairs
+    progress = pyqtSignal(int, int)  # variants_scanned, total_variants
     finished_detection = pyqtSignal(int, int)  # group_count, total_images
 
-    def __init__(self, db_path: str, threshold: int = 5, parent=None):
+    def __init__(self, db_path: str, threshold: int = 10, parent=None):
         super().__init__(parent)
         self._db_path = db_path
         self._threshold = threshold
@@ -79,26 +81,50 @@ class DuplicateDetectionDialog(QDialog):
 
         self.setWindowTitle("Duplicate Detection")
         self.setMinimumWidth(500)
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(180)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
 
-        self._status_label = QLabel("Checking for existing duplicate groups...")
+        self._status_label = QLabel("Configure and start duplicate detection.")
         layout.addWidget(self._status_label)
+
+        # Threshold input
+        threshold_row = QHBoxLayout()
+        threshold_row.addWidget(QLabel("Similarity threshold (lower = stricter):"))
+        self._threshold_spin = QSpinBox()
+        self._threshold_spin.setRange(0, THRESHOLD_MAX)
+        cfg_value = int(self._config.get(
+            "duplicate_detection.similarity_threshold", 10
+        ))
+        self._threshold_spin.setValue(min(cfg_value, THRESHOLD_MAX))
+        threshold_row.addWidget(self._threshold_spin)
+        threshold_row.addStretch(1)
+        self._threshold_row = threshold_row
+        layout.addLayout(threshold_row)
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setMinimum(0)
+        self._progress_bar.setVisible(False)
         layout.addWidget(self._progress_bar)
 
+        # Buttons
+        button_row = QHBoxLayout()
+        self._start_btn = QPushButton("Start")
+        self._start_btn.clicked.connect(self._start_detection)
+        button_row.addWidget(self._start_btn)
+
         self._cancel_btn = QPushButton("Cancel")
-        self._cancel_btn.clicked.connect(self._cancel)
-        layout.addWidget(self._cancel_btn)
+        self._cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(self._cancel_btn)
 
         self._review_btn = QPushButton("Review Duplicates")
         self._review_btn.setVisible(False)
         self._review_btn.clicked.connect(self._on_review)
-        layout.addWidget(self._review_btn)
+        button_row.addWidget(self._review_btn)
+
+        button_row.addStretch(1)
+        layout.addLayout(button_row)
 
         # Check for existing groups
         existing = db.get_duplicate_groups()
@@ -119,10 +145,9 @@ class DuplicateDetectionDialog(QDialog):
                     f"Existing: {len(existing)} group(s) with "
                     f"{total_images} total images"
                 )
-                self._progress_bar.setVisible(False)
+                self._threshold_spin.setEnabled(False)
+                self._start_btn.setVisible(False)
                 self._cancel_btn.setText("Close")
-                self._cancel_btn.clicked.disconnect()
-                self._cancel_btn.clicked.connect(self.accept)
                 self._review_btn.setVisible(True)
                 return
             else:
@@ -130,16 +155,19 @@ class DuplicateDetectionDialog(QDialog):
                 for g in existing:
                     db.delete_duplicate_group(g.id)
 
-        self._start_detection()
-
     def _start_detection(self) -> None:
+        threshold = self._threshold_spin.value()
+        # Persist user's choice for next time
+        self._config.set("duplicate_detection.similarity_threshold", threshold)
+
         self._status_label.setText("Detecting duplicates...")
-        threshold = self._config.get(
-            "duplicate_detection.similarity_threshold", 10
-        )
-        self._thread = _DuplicateThread(
-            str(self._db.db_path), threshold
-        )
+        self._threshold_spin.setEnabled(False)
+        self._start_btn.setVisible(False)
+        self._progress_bar.setVisible(True)
+        self._cancel_btn.clicked.disconnect()
+        self._cancel_btn.clicked.connect(self._cancel)
+
+        self._thread = _DuplicateThread(str(self._db.db_path), threshold)
         self._thread.progress.connect(self._on_progress)
         self._thread.finished_detection.connect(self._on_finished)
         self._thread.start()
@@ -148,7 +176,7 @@ class DuplicateDetectionDialog(QDialog):
         self._progress_bar.setMaximum(total)
         self._progress_bar.setValue(current)
         self._status_label.setText(
-            f"Comparing pairs: {current}/{total}..."
+            f"Scanning images: {current}/{total}..."
         )
 
     def _on_finished(self, group_count: int, total_images: int) -> None:

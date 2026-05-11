@@ -1,19 +1,51 @@
-"""Duplicate detection using perceptual hashes."""
+"""Duplicate detection using perceptual hashes.
+
+Uses a BK-tree indexed on pHash to enumerate candidate pairs in
+sub-quadratic time, then verifies each candidate by checking that BOTH
+pHash and dHash are within the threshold at the same orientation pair.
+Each image contributes up to 5 orientation variants (r0/90/180/270 +
+horizontal mirror); a duplicate match requires any one variant pair
+across two images to satisfy both-hash threshold.
+"""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Callable
 
-import imagehash
+import pybktree
 
 from photo_manager.db.manager import DatabaseManager
 from photo_manager.db.models import ImageRecord
 
 logger = logging.getLogger(__name__)
 
-# Callback: (current_count, total_count)
+# Callback: (current_count, total_count). With BK-tree the meaning is
+# "variants queried" / "total variants" — see DuplicateDetectionDialog.
 ProgressCallback = Callable[[int, int], None]
+
+THRESHOLD_MAX = 20
+
+
+@dataclass(frozen=True)
+class _Variant:
+    image_id: int
+    phash: int
+    dhash: int
+
+
+def _hex_to_int(s: str | None) -> int | None:
+    if not s:
+        return None
+    try:
+        return int(s, 16)
+    except ValueError:
+        return None
+
+
+def _bk_distance(a, b) -> int:
+    return (a[0] ^ b[0]).bit_count()
 
 
 class DuplicateDetector:
@@ -21,7 +53,7 @@ class DuplicateDetector:
 
     def __init__(self, db: DatabaseManager, threshold: int = 10):
         self._db = db
-        self._threshold = threshold
+        self._threshold = max(0, min(int(threshold), THRESHOLD_MAX))
 
     def find_duplicates(
         self,
@@ -29,23 +61,49 @@ class DuplicateDetector:
     ) -> list[list[int]]:
         """Find groups of duplicate images in the database.
 
-        Two images are considered duplicates when BOTH their pHash AND dHash
-        are within the threshold distance at the SAME rotation pair, checking
-        all 16 rotation combinations (4 rotations × 4 rotations).
+        Two images are duplicates when ANY of their orientation variants
+        (r0/90/180/270/hmirror) has BOTH pHash AND dHash within the
+        threshold Hamming distance.
 
-        Returns a list of groups, where each group is a list of image IDs
-        sorted by file_size descending.
+        Returns a list of groups, each a list of image IDs sorted by
+        file_size descending.
         """
         images = self._db.get_all_images()
-        # Filter to images that have hashes computed
-        hashed = [
-            img for img in images
-            if img.phash_0 is not None and img.dhash_0 is not None
-        ]
+        # Map image_id -> file_size for sort, and only retain images that
+        # have at least one usable (phash, dhash) variant.
+        sizes: dict[int, int] = {}
+        variants: list[_Variant] = []
 
-        total = len(hashed)
-        # Union-Find for grouping
-        parent: dict[int, int] = {img.id: img.id for img in hashed}
+        for img in images:
+            if img.id is None:
+                continue
+            had_variant = False
+            for ph_str, dh_str in (
+                (img.phash_0, img.dhash_0),
+                (img.phash_90, img.dhash_90),
+                (img.phash_180, img.dhash_180),
+                (img.phash_270, img.dhash_270),
+                (img.phash_hmirror, img.dhash_hmirror),
+            ):
+                ph = _hex_to_int(ph_str)
+                dh = _hex_to_int(dh_str)
+                if ph is None or dh is None:
+                    continue
+                variants.append(_Variant(img.id, ph, dh))
+                had_variant = True
+            if had_variant:
+                sizes[img.id] = img.file_size or 0
+
+        total_variants = len(variants)
+        if total_variants == 0:
+            return []
+
+        # Build BK-tree over (phash_int, variant_idx) tuples.
+        items = [(v.phash, idx) for idx, v in enumerate(variants)]
+        tree = pybktree.BKTree(_bk_distance, items)
+
+        # Union-Find over image IDs
+        parent: dict[int, int] = {img_id: img_id for img_id in sizes}
 
         def find(x: int) -> int:
             while parent[x] != x:
@@ -58,131 +116,55 @@ class DuplicateDetector:
             if px != py:
                 parent[px] = py
 
-        # Compare all pairs
-        count = 0
-        total_pairs = total * (total - 1) // 2
-        for i in range(total):
-            for j in range(i + 1, total):
-                count += 1
-                if progress_callback and count % 1000 == 0:
-                    progress_callback(count, total_pairs)
+        seen_pairs: set[tuple[int, int]] = set()
 
-                if self._are_duplicates(hashed[i], hashed[j]):
-                    union(hashed[i].id, hashed[j].id)
+        for idx, v in enumerate(variants):
+            if progress_callback and (idx % 100 == 0 or idx == total_variants - 1):
+                progress_callback(idx + 1, total_variants)
+
+            for _dist, (_other_ph, other_idx) in tree.find(
+                (v.phash, idx), self._threshold
+            ):
+                if other_idx == idx:
+                    continue  # self
+                ov = variants[other_idx]
+                if ov.image_id == v.image_id:
+                    continue  # same image, different orientation
+
+                # Order pair so we only verify and union once per image-pair
+                a_id, b_id = (
+                    (v.image_id, ov.image_id)
+                    if v.image_id < ov.image_id
+                    else (ov.image_id, v.image_id)
+                )
+                if (a_id, b_id) in seen_pairs:
+                    continue
+
+                # phash already passed; verify dhash
+                if (v.dhash ^ ov.dhash).bit_count() > self._threshold:
+                    continue
+
+                seen_pairs.add((a_id, b_id))
+                union(a_id, b_id)
+
+        if progress_callback:
+            progress_callback(total_variants, total_variants)
 
         # Build groups
         groups: dict[int, list[int]] = {}
-        for img in hashed:
-            root = find(img.id)
-            groups.setdefault(root, []).append(img.id)
+        for img_id in sizes:
+            root = find(img_id)
+            groups.setdefault(root, []).append(img_id)
 
-        # Filter to groups with 2+ members, sort by file size
-        result = []
+        result: list[list[int]] = []
         for group_ids in groups.values():
             if len(group_ids) < 2:
                 continue
-            # Sort by file_size descending
-            group_images = [
-                (img_id, self._get_file_size(img_id, hashed))
-                for img_id in group_ids
-            ]
-            group_images.sort(key=lambda x: x[1] or 0, reverse=True)
-            result.append([img_id for img_id, _ in group_images])
+            group_ids.sort(key=lambda i: sizes.get(i, 0), reverse=True)
+            result.append(group_ids)
 
         return result
 
     def store_duplicate_groups(self, groups: list[list[int]]) -> list[int]:
-        """Store duplicate groups in the database.
-
-        Returns list of created group IDs.
-        """
-        group_ids = []
-        for image_ids in groups:
-            group_id = self._db.create_duplicate_group(image_ids)
-            group_ids.append(group_id)
-        return group_ids
-
-    def _are_duplicates(self, a: ImageRecord, b: ImageRecord) -> bool:
-        """Check if two images are duplicates using rotation-aware hash comparison.
-
-        For each of the 16 rotation pairs (4 rotations of A × 4 rotations of B),
-        both pHash AND dHash must be within threshold at the SAME rotation pair.
-
-        Also checks mirror: each image's mirror hash pair is compared against
-        the other image's non-mirror rotation pairs.
-        """
-        # Build paired (phash, dhash) tuples for each rotation
-        a_pairs = self._get_hash_pairs(a)
-        b_pairs = self._get_hash_pairs(b)
-
-        if not a_pairs or not b_pairs:
-            return False
-
-        # Check all rotation combinations — both hashes must match at same pair
-        for a_ph, a_dh in a_pairs:
-            for b_ph, b_dh in b_pairs:
-                if (a_ph - b_ph) <= self._threshold and (a_dh - b_dh) <= self._threshold:
-                    return True
-
-        # Check mirror: A's mirror vs B's rotations, and B's mirror vs A's rotations
-        a_mirror = self._get_mirror_pair(a)
-        b_mirror = self._get_mirror_pair(b)
-
-        if a_mirror:
-            for b_ph, b_dh in b_pairs:
-                if (a_mirror[0] - b_ph) <= self._threshold and (a_mirror[1] - b_dh) <= self._threshold:
-                    return True
-
-        if b_mirror:
-            for a_ph, a_dh in a_pairs:
-                if (b_mirror[0] - a_ph) <= self._threshold and (b_mirror[1] - a_dh) <= self._threshold:
-                    return True
-
-        return False
-
-    def _get_hash_pairs(
-        self, img: ImageRecord,
-    ) -> list[tuple[imagehash.ImageHash, imagehash.ImageHash]]:
-        """Get paired (phash, dhash) for each rotation of an image."""
-        rotations = [
-            (img.phash_0, img.dhash_0),
-            (img.phash_90, img.dhash_90),
-            (img.phash_180, img.dhash_180),
-            (img.phash_270, img.dhash_270),
-        ]
-        pairs = []
-        for ph_str, dh_str in rotations:
-            if ph_str and dh_str:
-                try:
-                    pairs.append((
-                        imagehash.hex_to_hash(ph_str),
-                        imagehash.hex_to_hash(dh_str),
-                    ))
-                except Exception:
-                    pass
-        return pairs
-
-    def _get_mirror_pair(
-        self, img: ImageRecord,
-    ) -> tuple[imagehash.ImageHash, imagehash.ImageHash] | None:
-        """Get the (phash, dhash) pair for the horizontal mirror of an image."""
-        ph_str = img.phash_hmirror
-        dh_str = img.dhash_hmirror
-        if ph_str and dh_str:
-            try:
-                return (
-                    imagehash.hex_to_hash(ph_str),
-                    imagehash.hex_to_hash(dh_str),
-                )
-            except Exception:
-                pass
-        return None
-
-    def _get_file_size(
-        self, image_id: int, images: list[ImageRecord]
-    ) -> int | None:
-        """Get file size for an image from the list."""
-        for img in images:
-            if img.id == image_id:
-                return img.file_size
-        return None
+        """Store duplicate groups in the database. Returns created group IDs."""
+        return [self._db.create_duplicate_group(ids) for ids in groups]

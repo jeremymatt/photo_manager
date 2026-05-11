@@ -273,3 +273,76 @@ class TestDuplicateDetector:
         stored_groups = db_with_hashes.get_duplicate_groups()
         assert len(stored_groups) == 1
         assert len(stored_groups[0].members) == 2
+
+    def test_threshold_boundary(self, tmp_path):
+        """Distance == threshold matches; distance == threshold+1 doesn't."""
+        db = DatabaseManager()
+        db.create_database(tmp_path / "boundary.db")
+        try:
+            base = "00" * 8                       # 64 zero bits
+            three_bits = f"{0b00000111:02x}" + "00" * 7  # distance 3 from base
+
+            # Pair A vs B: distance 3 in phash AND dhash. Threshold 3 -> match.
+            img_a = ImageRecord(
+                filepath="ba.jpg", filename="ba.jpg",
+                phash_0=base, phash_90=base, phash_180=base, phash_270=base,
+                dhash_0=base, dhash_90=base, dhash_180=base, dhash_270=base,
+                file_size=1000,
+            )
+            img_b = ImageRecord(
+                filepath="bb.jpg", filename="bb.jpg",
+                phash_0=three_bits, phash_90=three_bits,
+                phash_180=three_bits, phash_270=three_bits,
+                dhash_0=three_bits, dhash_90=three_bits,
+                dhash_180=three_bits, dhash_270=three_bits,
+                file_size=900,
+            )
+            db.add_image(img_a)
+            db.add_image(img_b)
+
+            assert len(DuplicateDetector(db, threshold=3).find_duplicates()) == 1
+            assert DuplicateDetector(db, threshold=2).find_duplicates() == []
+        finally:
+            db.close()
+
+    def test_large_n_finds_known_duplicate(self, tmp_path):
+        """BK-tree pruning must not drop a known duplicate buried among noise."""
+        import random
+
+        db = DatabaseManager()
+        db.create_database(tmp_path / "large.db")
+        try:
+            rng = random.Random(42)
+            # 200 noise images with random distinct hashes
+            for i in range(200):
+                random_hash = f"{rng.randrange(1 << 64):016x}"
+                ph = random_hash
+                dh = f"{rng.randrange(1 << 64):016x}"
+                db.add_image(ImageRecord(
+                    filepath=f"n{i}.jpg", filename=f"n{i}.jpg",
+                    phash_0=ph, phash_90=ph, phash_180=ph, phash_270=ph,
+                    dhash_0=dh, dhash_90=dh, dhash_180=dh, dhash_270=dh,
+                    file_size=1000 + i,
+                ))
+            # One known-duplicate pair with identical hashes
+            dup_ph = "deadbeefcafef00d"
+            dup_dh = "0123456789abcdef"
+            for tag, size in [("dup_a", 5000), ("dup_b", 4000)]:
+                db.add_image(ImageRecord(
+                    filepath=f"{tag}.jpg", filename=f"{tag}.jpg",
+                    phash_0=dup_ph, phash_90=dup_ph,
+                    phash_180=dup_ph, phash_270=dup_ph,
+                    dhash_0=dup_dh, dhash_90=dup_dh,
+                    dhash_180=dup_dh, dhash_270=dup_dh,
+                    file_size=size,
+                ))
+
+            groups = DuplicateDetector(db, threshold=10).find_duplicates()
+            dup_a_id = db.get_image_by_path("dup_a.jpg").id
+            dup_b_id = db.get_image_by_path("dup_b.jpg").id
+            assert len(groups) == 1
+            assert set(groups[0]) == {dup_a_id, dup_b_id}
+            # Larger file size first
+            assert groups[0][0] == dup_a_id
+        finally:
+            db.close()

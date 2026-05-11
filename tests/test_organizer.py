@@ -389,7 +389,7 @@ class TestOrganizerTagActions:
         assert _SINGLE_KEY_MAP.get(d_tuple) == OrganizerAction.QUICK_BINDING
         assert _SINGLE_KEY_MAP.get(r_tuple) == OrganizerAction.QUICK_BINDING
         assert handler._binding_actions[f_tuple] == ["set_favorite"]
-        assert handler._binding_actions[d_tuple] == ["set_to_delete"]
+        assert handler._binding_actions[d_tuple] == ["toggle_to_delete"]
         assert handler._binding_actions[r_tuple] == ["set_reviewed"]
 
         # Clean up

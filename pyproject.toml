@@ -12,6 +12,7 @@ dependencies = [
     "imagehash>=4.3",
     "PyYAML>=6.0",
     "PyQt6>=6.5",
+    "pybktree>=1.1",
 ]
 
 [project.scripts]
