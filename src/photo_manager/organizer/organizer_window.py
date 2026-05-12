@@ -45,6 +45,7 @@ ORGANIZER_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("Shift+Click", "Extend selection from anchor (Windows-style)"),
         ("Ctrl+A", "Select all in current view"),
         ("Arrow keys", "Move selection"),
+        ("Shift+Arrow", "Extend selection by one"),
         ("Alt+Right / Left", "Next / previous folder (folder view only)"),
         ("Double-click / Enter", "Open in single view"),
         ("Red X overlay", "Image is marked for deletion"),
@@ -247,6 +248,11 @@ class OrganizerWindow(QMainWindow):
     def _on_view_changed(self, mode: str) -> None:
         self._key_handler.grid_mode = (mode == ViewMode.GRID)
         self._update_status()
+        # Re-apply the dup auto-selection every time we land in the grid
+        # while in dup review — matches the "fresh group" default so a
+        # quick Tab back lands ready-to-mark.
+        if mode == ViewMode.GRID and self._source.is_dup_filtered:
+            self._auto_select_dup_smaller()
 
     def _on_action(self, action: OrganizerAction) -> None:
         # Dismiss help on any action except toggle help / show tag hotkeys
@@ -1036,6 +1042,12 @@ class OrganizerWindow(QMainWindow):
                 "No duplicate groups found. Use Ctrl+Shift+D to detect."
             )
             return
+        # Skip past groups the user has already processed (any member
+        # already marked for deletion). Stays on group 0 if nothing
+        # qualifies.
+        first_unmarked = self._source.first_unmarked_dup_group_index()
+        if first_unmarked != self._source.current_dup_group_index:
+            self._source.set_dup_group(first_unmarked)
         self._update_dup_status()
         self._update_dup_grid_labels()
         self._apply_dup_corner_labels()
@@ -1452,7 +1464,7 @@ class OrganizerWindow(QMainWindow):
                 single._loader.invalidate(idx)
             # Also invalidate grid thumbnail so it reflects the rotation
             grid = self._view_manager.grid_view
-            grid._thumb_worker.invalidate(idx, filepath)
+            grid._thumb_worker.invalidate(filepath)
             single.canvas._rotation = 0
             single.goto(idx)
             self._status_bar.showMessage(

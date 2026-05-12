@@ -3,12 +3,69 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeVar
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from photo_manager.db.manager import DatabaseManager
 from photo_manager.db.models import DuplicateGroup, DuplicateGroupMember, ImageRecord
 from photo_manager.query.engine import QueryEngine
+
+
+# Two areas within this ratio (largest / smallest) are treated as tied;
+# file_size becomes the tiebreaker. Picked so a few percent of pixel
+# trim doesn't push a high-quality re-encode below a low-bpp original.
+_AREA_TIE_RATIO = 1.05
+
+T = TypeVar("T")
+
+
+def _quality_order(items: list[tuple[T, ImageRecord]]) -> list[tuple[T, ImageRecord]]:
+    """Sort (payload, record) pairs by perceived quality, best first.
+
+    Cluster-then-sort: by area desc, then group consecutive items whose
+    area is within `_AREA_TIE_RATIO` of the cluster's leader (largest)
+    area; within each cluster sort by file_size desc.
+
+    This avoids the bucket-boundary bug of `round(log(area))`: two areas
+    only a few percent apart could land in different buckets purely by
+    where they fell relative to the rounding boundary.
+    """
+    def area(it: tuple[T, ImageRecord]) -> int:
+        r = it[1]
+        return (r.width or 0) * (r.height or 0)
+
+    def file_size(it: tuple[T, ImageRecord]) -> int:
+        return it[1].file_size or 0
+
+    by_area = sorted(items, key=area, reverse=True)
+
+    clusters: list[list[tuple[T, ImageRecord]]] = []
+    current: list[tuple[T, ImageRecord]] = []
+    leader_area: int = 0
+    for it in by_area:
+        a = area(it)
+        if not current:
+            current = [it]
+            leader_area = a
+            continue
+        # Item joins current cluster iff its area is within tolerance of
+        # the leader area. Anchoring to leader (not previous) prevents
+        # transitive creep across many slightly-shrinking sizes.
+        if a > 0 and a * _AREA_TIE_RATIO >= leader_area:
+            current.append(it)
+        else:
+            clusters.append(current)
+            current = [it]
+            leader_area = a
+    if current:
+        clusters.append(current)
+
+    out: list[tuple[T, ImageRecord]] = []
+    for cluster in clusters:
+        cluster.sort(key=file_size, reverse=True)
+        out.extend(cluster)
+    return out
 
 
 class ImageSource(QObject):
@@ -137,6 +194,48 @@ class ImageSource(QObject):
             seen.add(self._record_folder(r))
         return sorted(seen)
 
+    def filepaths_in_folder(self, folder: str) -> list[str]:
+        """Absolute filepaths of records whose parent folder matches `folder`."""
+        target = str(Path(folder))
+        return [
+            self._resolve_path(r.filepath)
+            for r in self._records
+            if self._record_folder(r) == target
+        ]
+
+    def first_unmarked_dup_group_index(self) -> int:
+        """Index of the first dup group where no member has `to_delete=True`.
+
+        Returns 0 if every group already has at least one member marked
+        for deletion (or there are no groups). Useful for skipping ahead
+        on dup-review entry past groups the user has already processed.
+        """
+        if not self._dup_groups:
+            return 0
+        records_by_id = {r.id: r for r in self._records if r.id is not None}
+        for i, group in enumerate(self._dup_groups):
+            any_marked = any(
+                records_by_id[m.image_id].to_delete
+                for m in group.members
+                if m.image_id in records_by_id
+            )
+            if not any_marked:
+                return i
+        return 0
+
+    def filepaths_in_dup_group(self, group_index: int) -> list[str]:
+        """Absolute filepaths of members of the dup group at the given index.
+
+        Returned in the same quality order the dup view uses (see
+        `_quality_order`) so prefetch matches display order.
+        """
+        if not (0 <= group_index < len(self._dup_groups)):
+            return []
+        member_ids = {m.image_id for m in self._dup_groups[group_index].members}
+        items = [(r, r) for r in self._records if r.id in member_ids]
+        ordered = _quality_order(items)
+        return [self._resolve_path(r.filepath) for r, _ in ordered]
+
     def folder_for_index(self, index: int) -> str | None:
         """Parent folder of the record at the given (filtered-view) index."""
         record = self.get_record(index)
@@ -256,33 +355,21 @@ class ImageSource(QObject):
     def _rebuild_dup_filter(self) -> None:
         """Rebuild filtered indices for the current duplicate group.
 
-        Hybrid quality sort: bucket pixel area to ~5% precision so trivial
-        dimension differences tie, then break ties by file_size (a proxy
-        for compression quality — higher bytes-per-pixel == less aggressive
-        re-encoding == better "keep" candidate).
+        Order is determined by `_quality_order` (cluster by area within
+        ~5%, then sort by file_size within each cluster).
         """
-        import math
-
         group = self.current_dup_group
         if group is None:
             self._dup_filtered_indices = []
             return
 
-        def quality_key(r) -> tuple[int, int]:
-            area = (r.width or 0) * (r.height or 0)
-            fs = r.file_size or 0
-            if area <= 0:
-                return (0, fs)
-            # log buckets ~5% wide: e^(1/20) ≈ 1.051
-            return (round(math.log(area) * 20), fs)
-
         member_ids = {m.image_id for m in group.members}
-        matches = []
-        for i, r in enumerate(self._records):
-            if r.id in member_ids:
-                matches.append((i, quality_key(r)))
-        matches.sort(key=lambda x: x[1], reverse=True)
-        self._dup_filtered_indices = [idx for idx, _ in matches]
+        members = [
+            (i, r) for i, r in enumerate(self._records)
+            if r.id in member_ids
+        ]
+        ordered = _quality_order(members)
+        self._dup_filtered_indices = [idx for idx, _ in ordered]
 
     def _resolve_path(self, filepath: str) -> str:
         """Resolve a relative DB path to an absolute path."""

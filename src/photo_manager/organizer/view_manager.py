@@ -61,7 +61,7 @@ class ViewManager(QWidget):
         # Grid view + sidebar wrapped in a splitter
         columns = self._config.get("organizer.grid_columns", 5)
         initial_grid_thumb = self._config.get(
-            "organizer.grid_thumb_size", thumb_size[0]
+            "organizer.grid_thumb_size", 350
         )
         self._grid = GridView(
             self._thumb_worker,
@@ -181,6 +181,40 @@ class ViewManager(QWidget):
         self._refresh_sidebar_counts()
         self._refresh_sidebar_folder_label()
         self.grid_repopulated.emit()
+        self._schedule_prefetch()
+
+    def _schedule_prefetch(self) -> None:
+        """Queue background prefetch for the next folders/dup groups in order.
+
+        Foreground requests from the visible cells preempt these, so the
+        current view always loads first; the prefetched thumbs are ready
+        when the user navigates onward.
+        """
+        if self._source.is_dup_filtered:
+            n = self._source.dup_group_count
+            cur = self._source.current_dup_group_index
+            # Visit groups after the current one first, then wrap.
+            order = list(range(cur + 1, n)) + list(range(0, cur))
+            filepaths: list[str] = []
+            for idx in order:
+                filepaths.extend(self._source.filepaths_in_dup_group(idx))
+            self._thumb_worker.prefetch(filepaths)
+        elif self._source.folder_filter is not None:
+            folders = self._source.available_folders()
+            try:
+                cur = folders.index(self._source.folder_filter)
+            except ValueError:
+                self._thumb_worker.prefetch([])
+                return
+            order = folders[cur + 1:] + folders[:cur]
+            filepaths = []
+            for folder in order:
+                filepaths.extend(self._source.filepaths_in_folder(folder))
+            self._thumb_worker.prefetch(filepaths)
+        else:
+            # All-images view: the visible-cell requests already cover
+            # everything; clear any leftover prefetch from a prior view.
+            self._thumb_worker.prefetch([])
 
     def _on_single_index_changed(self, index: int) -> None:
         """Keep grid selection in sync when navigating in single view."""

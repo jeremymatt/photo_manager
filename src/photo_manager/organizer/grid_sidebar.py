@@ -38,8 +38,8 @@ class GridSidebar(QWidget):
     def __init__(
         self,
         thumb_size: int,
-        thumb_size_min: int = 80,
-        thumb_size_max: int = 400,
+        thumb_size_min: int = 150,
+        thumb_size_max: int = 800,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)

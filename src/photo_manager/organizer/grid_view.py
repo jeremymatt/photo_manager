@@ -301,6 +301,9 @@ class GridView(QScrollArea):
         self._selected_indices: set[int] = set()
         self._anchor: int = -1
         self._anchor_selected: bool = True
+        # Cursor moves with arrow nav; anchor only moves on click/ctrl-click,
+        # so shift+arrow can extend a stable range.
+        self._cursor: int = -1
 
         # Setup scroll area
         self.setWidgetResizable(False)
@@ -326,9 +329,7 @@ class GridView(QScrollArea):
         self._selected_indices.clear()
         self._anchor = -1
         self._anchor_selected = True
-
-        # Clear thumbnail cache since indices now refer to different images
-        self._thumb_worker.clear_cache()
+        self._cursor = -1
 
         # Create cells
         self._cells = []
@@ -369,6 +370,7 @@ class GridView(QScrollArea):
             self._cells[index].selected = True
             self._anchor = index
             self._anchor_selected = True
+            self._cursor = index
             self.ensureWidgetVisible(self._cells[index])
         self.selection_changed.emit(list(self._selected_indices))
 
@@ -382,6 +384,7 @@ class GridView(QScrollArea):
         if not indices:
             self._anchor = -1
             self._anchor_selected = True
+            self._cursor = -1
             self.selection_changed.emit([])
             return
         first = -1
@@ -393,6 +396,7 @@ class GridView(QScrollArea):
                     first = idx
         self._anchor = first
         self._anchor_selected = True
+        self._cursor = first
         self.selection_changed.emit(list(self._selected_indices))
 
     def get_selected_indices(self) -> list[int]:
@@ -457,6 +461,7 @@ class GridView(QScrollArea):
             self._set_cell_selected(index, new_state)
             self._anchor = index
             self._anchor_selected = new_state
+            self._cursor = index
         elif modifiers & Qt.KeyboardModifier.ShiftModifier:
             # Extend from anchor: apply anchor's state across the range.
             # Anchor itself stays put so further shift+clicks extend from it.
@@ -467,12 +472,14 @@ class GridView(QScrollArea):
             end = max(self._anchor, index)
             for i in range(start, end + 1):
                 self._set_cell_selected(i, self._anchor_selected)
+            self._cursor = index
         else:
             # Plain click: single-select, becomes the anchor
             self._clear_selection()
             self._set_cell_selected(index, True)
             self._anchor = index
             self._anchor_selected = True
+            self._cursor = index
 
         self.selection_changed.emit(list(self._selected_indices))
 
@@ -491,18 +498,27 @@ class GridView(QScrollArea):
                 self._cells[i].set_thumbnail(cached)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Arrow key navigation in grid."""
+        """Arrow key navigation; Shift+arrow extends selection."""
         if not self._cells:
             super().keyPressEvent(event)
             return
 
-        # Let modified arrows pass through to the key handler for folder/dup nav
-        if event.modifiers() & (Qt.KeyboardModifier.ControlModifier
-                                | Qt.KeyboardModifier.AltModifier):
+        modifiers = event.modifiers()
+
+        # Let Ctrl/Alt-modified arrows pass through to the key handler for
+        # folder/dup-group nav (Shift alone stays here).
+        if modifiers & (Qt.KeyboardModifier.ControlModifier
+                        | Qt.KeyboardModifier.AltModifier):
             event.ignore()
             return
 
-        current = self._anchor if self._anchor >= 0 else 0
+        # Cursor follows arrow nav; falls back to anchor or 0 if unset.
+        if self._cursor >= 0:
+            current = self._cursor
+        elif self._anchor >= 0:
+            current = self._anchor
+        else:
+            current = 0
         key = event.key()
 
         if key == Qt.Key.Key_Right:
@@ -521,7 +537,23 @@ class GridView(QScrollArea):
             super().keyPressEvent(event)
             return
 
-        self.select_index(new_idx)
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            # Shift+arrow: extend the selection from the anchor to new_idx
+            # using the anchor's state (mirrors shift+click behavior).
+            if self._anchor < 0:
+                self._anchor = current
+                self._anchor_selected = True
+            start = min(self._anchor, new_idx)
+            end = max(self._anchor, new_idx)
+            for i in range(start, end + 1):
+                self._set_cell_selected(i, self._anchor_selected)
+            self._cursor = new_idx
+            if 0 <= new_idx < len(self._cells):
+                self.ensureWidgetVisible(self._cells[new_idx])
+            self.selection_changed.emit(list(self._selected_indices))
+        else:
+            # Plain arrow: single-select at new_idx (anchor moves)
+            self.select_index(new_idx)
 
     def contextMenuEvent(self, event) -> None:
         """Show right-click context menu."""
@@ -535,6 +567,7 @@ class GridView(QScrollArea):
                     self._set_cell_selected(cell.index, True)
                     self._anchor = cell.index
                     self._anchor_selected = True
+                    self._cursor = cell.index
                     self.selection_changed.emit(list(self._selected_indices))
                 break
         else:
